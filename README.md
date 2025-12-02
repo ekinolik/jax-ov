@@ -563,43 +563,43 @@ This will:
 
 **Endpoint**: `ws://host:port/analyze`
 
-**Message Types**:
+**Message Format**:
 
-1. **History Message** (sent on connection):
+All messages are sent as individual JSON objects representing time period summaries. There is no wrapper or type field - clients receive the summary objects directly.
+
+**On Connection** (History):
+When a client connects, they receive all historical time period summaries for the current day, sent as separate messages (one per period):
+
 ```json
 {
-  "type": "history",
-  "data": [
-    {
-      "period_start": "2025-11-28T09:30:00Z",
-      "period_end": "2025-11-28T09:35:00Z",
-      "call_premium": 1234567.89,
-      "put_premium": 987654.32,
-      "total_premium": 2222222.21,
-      "call_put_ratio": 1.25,
-      "call_volume": 15000,
-      "put_volume": 12000
-    }
-  ]
+  "period_start": "2025-11-28T09:30:00Z",
+  "period_end": "2025-11-28T09:35:00Z",
+  "call_premium": 1234567.89,
+  "put_premium": 987654.32,
+  "total_premium": 2222222.21,
+  "call_put_ratio": 1.25,
+  "call_volume": 15000,
+  "put_volume": 12000
 }
 ```
 
-2. **Update Message** (sent every minute):
+**Periodic Updates** (every minute):
+After the initial history, clients receive new time period summaries as they become available:
+
 ```json
 {
-  "type": "update",
-  "data": {
-    "period_start": "2025-11-28T14:30:00Z",
-    "period_end": "2025-11-28T14:35:00Z",
-    "call_premium": 1234567.89,
-    "put_premium": 987654.32,
-    "total_premium": 2222222.21,
-    "call_put_ratio": 1.25,
-    "call_volume": 15000,
-    "put_volume": 12000
-  }
+  "period_start": "2025-11-28T14:30:00Z",
+  "period_end": "2025-11-28T14:35:00Z",
+  "call_premium": 1234567.89,
+  "put_premium": 987654.32,
+  "total_premium": 2222222.21,
+  "call_put_ratio": 1.25,
+  "call_volume": 15000,
+  "put_volume": 12000
 }
 ```
+
+**Note**: History and update messages are identical in format - clients cannot distinguish between them. All messages are sent as individual JSON objects (JSONL-like format over WebSocket).
 
 #### Running Both Services
 

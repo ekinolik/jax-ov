@@ -16,16 +16,10 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// Message represents a WebSocket message
-type Message struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
-}
-
 // Server manages WebSocket connections and broadcasts messages
 type Server struct {
 	clients    map[*websocket.Conn]bool
-	broadcast  chan Message
+	broadcast  chan analysis.TimePeriodSummary
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	mu         sync.RWMutex
@@ -35,7 +29,7 @@ type Server struct {
 func NewServer() *Server {
 	return &Server{
 		clients:    make(map[*websocket.Conn]bool),
-		broadcast:  make(chan Message, 256),
+		broadcast:  make(chan analysis.TimePeriodSummary, 256),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
 	}
@@ -75,9 +69,9 @@ func (s *Server) Run() {
 	}
 }
 
-// Broadcast sends a message to all connected clients
-func (s *Server) Broadcast(msg Message) {
-	s.broadcast <- msg
+// Broadcast sends a summary to all connected clients
+func (s *Server) Broadcast(summary analysis.TimePeriodSummary) {
+	s.broadcast <- summary
 }
 
 // HandleWebSocket handles WebSocket connections
@@ -119,20 +113,19 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // SendHistory sends historical data to a specific client
 func (s *Server) SendHistory(conn *websocket.Conn, summaries []analysis.TimePeriodSummary) error {
-	msg := Message{
-		Type: "history",
-		Data: summaries,
+	// Send each summary as a separate message (just the summary object, no wrapper)
+	for _, summary := range summaries {
+		if err := conn.WriteJSON(summary); err != nil {
+			return err
+		}
 	}
-	return conn.WriteJSON(msg)
+	return nil
 }
 
 // SendUpdate sends an update to all clients
 func (s *Server) SendUpdate(summary analysis.TimePeriodSummary) {
-	msg := Message{
-		Type: "update",
-		Data: summary,
-	}
-	s.Broadcast(msg)
+	// Send the summary directly, not wrapped in a Message struct
+	s.Broadcast(summary)
 }
 
 // Register registers a new client connection
