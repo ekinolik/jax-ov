@@ -47,12 +47,14 @@ MASSIVE_API_KEY=your_api_key_here
 
 ### Commands
 
-The project includes four main commands:
+The project includes six main commands:
 
 1. **monitor** - Real-time WebSocket streaming
 2. **reconstruct** - Historical feed reconstruction
 3. **analyze** - Premium analysis of reconstructed feeds
 4. **extract** - Extract transactions for a specific time period
+5. **logger** - WebSocket logger service (logs to daily files)
+6. **server** - Analysis WebSocket server (serves analyzed data to clients)
 
 ### Monitor Command (Real-time WebSocket)
 
@@ -296,6 +298,121 @@ The extract command outputs a JSON array of all aggregate transactions within th
 
 The output is written to stdout (console) as JSON, making it easy to pipe to other tools or save to a file.
 
+### Logger Service (WebSocket Data Logger)
+
+#### Build the logger service
+
+```bash
+go build -o logger ./cmd/logger
+```
+
+#### Start logging WebSocket data
+
+```bash
+./logger --ticker AAPL --mode all --log-dir ./logs
+```
+
+This will:
+1. Connect to massive.com WebSocket
+2. Subscribe to all option contracts for the specified ticker
+3. Log each aggregate as a single-line JSON (JSONL format) to daily files
+4. Automatically use the correct file based on current date (YYYY-MM-DD.jsonl)
+
+#### Logger Command-line Flags
+
+- `--ticker` or `-t`: Underlying stock ticker (required, e.g., "AAPL")
+- `--mode` or `-m`: Subscription mode - "all" or "contract" (default: "all")
+- `--contract` or `-c`: Specific option contract symbol (required if mode is "contract")
+- `--log-dir`: Log directory path (default: "./logs")
+
+**Log File Format**:
+- Location: `{log-dir}/YYYY-MM-DD.jsonl`
+- Format: One JSON object per line (JSONL)
+- Each line: Complete aggregate object matching WebSocket format
+- File automatically rotates daily (new file each day)
+
+### Server Service (Analysis WebSocket Server)
+
+#### Build the server service
+
+```bash
+go build -o server ./cmd/server
+```
+
+#### Start the analysis server
+
+```bash
+./server --log-dir ./logs --period 5 --port 8080
+```
+
+This will:
+1. Read log files from the specified directory
+2. Analyze data using premium aggregation (same as analyze command)
+3. Serve analyzed results via WebSocket
+4. Send historical data to new clients on connection
+5. Broadcast updates every minute with new period summaries
+
+#### Server Command-line Flags
+
+- `--log-dir`: Log directory path (default: "./logs")
+- `--period` or `-p`: Analysis period in minutes (default: 5)
+- `--port`: WebSocket server port (default: "8080")
+- `--host`: Bind address (default: "localhost")
+
+#### WebSocket Protocol
+
+**Endpoint**: `ws://host:port/analyze`
+
+**Message Types**:
+
+1. **History Message** (sent on connection):
+```json
+{
+  "type": "history",
+  "data": [
+    {
+      "period_start": "2025-11-28T09:30:00Z",
+      "period_end": "2025-11-28T09:35:00Z",
+      "call_premium": 1234567.89,
+      "put_premium": 987654.32,
+      "total_premium": 2222222.21,
+      "call_put_ratio": 1.25,
+      "call_volume": 15000,
+      "put_volume": 12000
+    }
+  ]
+}
+```
+
+2. **Update Message** (sent every minute):
+```json
+{
+  "type": "update",
+  "data": {
+    "period_start": "2025-11-28T14:30:00Z",
+    "period_end": "2025-11-28T14:35:00Z",
+    "call_premium": 1234567.89,
+    "put_premium": 987654.32,
+    "total_premium": 2222222.21,
+    "call_put_ratio": 1.25,
+    "call_volume": 15000,
+    "put_volume": 12000
+  }
+}
+```
+
+#### Running Both Services
+
+```bash
+# Terminal 1: Start logger service
+./logger --ticker AAPL --mode all --log-dir ./logs
+
+# Terminal 2: Start analysis server
+./server --log-dir ./logs --period 5 --port 8080
+
+# Clients can now connect to ws://localhost:8080/analyze
+```
+
 ## Project Structure
 
 ```
@@ -307,8 +424,12 @@ jax-ov/
 │   │   └── main.go          # Historical feed reconstruction CLI
 │   ├── analyze/
 │   │   └── main.go          # Premium analysis CLI
-│   └── extract/
-│       └── main.go          # Time period extraction CLI
+│   ├── extract/
+│   │   └── main.go          # Time period extraction CLI
+│   ├── logger/
+│   │   └── main.go          # WebSocket logger service
+│   └── server/
+│       └── main.go          # Analysis WebSocket server
 ├── internal/
 │   ├── config/
 │   │   └── config.go        # Configuration loading from .env
@@ -316,8 +437,15 @@ jax-ov/
 │   │   └── client.go        # WebSocket client wrapper
 │   ├── rest/
 │   │   └── client.go        # REST API client wrapper
-│   └── analysis/
-│       └── analyzer.go      # Premium analysis logic
+│   ├── analysis/
+│   │   └── analyzer.go      # Premium analysis logic
+│   ├── logger/
+│   │   └── filelogger.go    # Daily file logger
+│   └── server/
+│       ├── server.go        # WebSocket server
+│       └── analyzer.go      # Log file analyzer
+├── logs/                    # Log file directory (gitignored)
+│   └── YYYY-MM-DD.jsonl     # Daily log files
 ├── go.mod                   # Go module file
 ├── go.sum                   # Go dependencies
 ├── .env.example             # Example environment file
@@ -340,6 +468,12 @@ go run ./cmd/analyze --input AAPL_options_2025-11-30.json --period 5
 
 # Run extract command
 go run ./cmd/extract --input AAPL_options_2025-11-30.json --time 9:46 --period 5
+
+# Run logger service
+go run ./cmd/logger --ticker AAPL --mode all --log-dir ./logs
+
+# Run server service
+go run ./cmd/server --log-dir ./logs --period 5 --port 8080
 ```
 
 ## Future Enhancements
