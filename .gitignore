@@ -27,6 +27,27 @@ go.work.sum
 # env file
 .env
 
+# Log files
+logs/
+*.jsonl
+
 # Editor/IDE
 # .idea/
 # .vscode/
+
+outputs/
+builds/
+
+# binaries
+/analyze
+/extract
+/log-analyze
+/log-extract
+/monitor
+/reconstruct
+/logger
+/server
+/top-contracts
+
+# build directory
+/bin
