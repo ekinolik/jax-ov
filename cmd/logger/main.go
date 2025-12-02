@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
@@ -63,10 +64,15 @@ func main() {
 
 	// Determine subscription ticker
 	var subscriptionTicker string
+	var filterPrefix string // Prefix to filter by when mode is "all"
 	if *mode == "all" {
-		subscriptionTicker = fmt.Sprintf("O:%s*", *ticker)
+		// Subscribe to all options, then filter by ticker prefix
+		subscriptionTicker = "*"
+		filterPrefix = fmt.Sprintf("O:%s", *ticker)
 	} else {
+		// Use the specific contract symbol
 		subscriptionTicker = *contract
+		filterPrefix = "" // No filtering needed for specific contract
 	}
 
 	// Subscribe
@@ -74,7 +80,11 @@ func main() {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
 
-	fmt.Printf("Logger started - Subscribed to: %s\n", subscriptionTicker)
+	if *mode == "all" {
+		fmt.Printf("Logger started - Subscribed to: %s (filtering for %s*)\n", subscriptionTicker, filterPrefix)
+	} else {
+		fmt.Printf("Logger started - Subscribed to: %s\n", subscriptionTicker)
+	}
 	fmt.Printf("Logging to directory: %s\n", *logDir)
 	fmt.Println("Press Ctrl+C to stop")
 
@@ -94,6 +104,11 @@ func main() {
 
 	// Define handler for incoming messages
 	handler := func(agg models.EquityAgg) {
+		// Filter by ticker prefix if mode is "all"
+		if filterPrefix != "" && !strings.HasPrefix(agg.Symbol, filterPrefix) {
+			return // Skip this message, it doesn't match our filter
+		}
+
 		// Convert to analysis.Aggregate format
 		analysisAgg := convertToAnalysisAggregate(agg)
 

@@ -36,11 +36,18 @@ logs/
 # .vscode/
 
 outputs/
+builds/
 
 # binaries
 /analyze
 /extract
+/log-analyze
+/log-extract
 /monitor
 /reconstruct
 /logger
 /server
+/top-contracts
+
+# build directory
+/bin

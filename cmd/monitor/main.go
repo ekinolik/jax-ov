@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -55,13 +56,15 @@ func main() {
 
 	// Determine subscription ticker
 	var subscriptionTicker string
+	var filterPrefix string // Prefix to filter by when mode is "all"
 	if *mode == "all" {
-		// For all options of an underlying, use wildcard pattern
-		// Format: O:TICKER* for all options of a ticker
-		subscriptionTicker = fmt.Sprintf("O:%s*", *ticker)
+		// Subscribe to all options, then filter by ticker prefix
+		subscriptionTicker = "*"
+		filterPrefix = fmt.Sprintf("O:%s", *ticker)
 	} else {
 		// Use the specific contract symbol
 		subscriptionTicker = *contract
+		filterPrefix = "" // No filtering needed for specific contract
 	}
 
 	// Subscribe
@@ -69,7 +72,11 @@ func main() {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
 
-	fmt.Printf("Subscribed to: %s\n", subscriptionTicker)
+	if *mode == "all" {
+		fmt.Printf("Subscribed to: %s (filtering for %s*)\n", subscriptionTicker, filterPrefix)
+	} else {
+		fmt.Printf("Subscribed to: %s\n", subscriptionTicker)
+	}
 	fmt.Println("Streaming options aggregate data... (Press Ctrl+C to stop)")
 	fmt.Println()
 
@@ -89,6 +96,11 @@ func main() {
 
 	// Define handler for incoming messages
 	handler := func(agg models.EquityAgg) {
+		// Filter by ticker prefix if mode is "all"
+		if filterPrefix != "" && !strings.HasPrefix(agg.Symbol, filterPrefix) {
+			return // Skip this message, it doesn't match our filter
+		}
+
 		printAggregate(agg)
 	}
 
@@ -101,13 +113,15 @@ func main() {
 // printAggregate prints the aggregate data in a readable format
 func printAggregate(agg models.EquityAgg) {
 	// Note: EquityAgg is used for options aggregates as they share the same structure
+	// StartTimestamp is in Unix milliseconds
 	var timestamp time.Time
 	if agg.StartTimestamp > 0 {
-		timestamp = time.Unix(0, agg.StartTimestamp*int64(time.Millisecond))
+		// Convert milliseconds to time.Time
+		timestamp = time.Unix(agg.StartTimestamp/1000, (agg.StartTimestamp%1000)*int64(time.Millisecond))
 	} else {
 		timestamp = time.Now()
 	}
-	
+
 	fmt.Printf("[%s] Symbol: %s | Volume: %.0f | OHLC: O=%.2f H=%.2f L=%.2f C=%.2f | VWAP: %.2f\n",
 		timestamp.Format("15:04:05"),
 		agg.Symbol,
@@ -119,4 +133,3 @@ func printAggregate(agg models.EquityAgg) {
 		agg.VWAP,
 	)
 }
-

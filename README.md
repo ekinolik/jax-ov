@@ -43,18 +43,64 @@ cp .env.example .env
 MASSIVE_API_KEY=your_api_key_here
 ```
 
+## Building
+
+### Using Make (Recommended)
+
+Build all commands for your current OS:
+```bash
+make all
+```
+
+Build all commands for Linux:
+```bash
+make linux-all
+```
+
+Build a specific command for Linux:
+```bash
+make linux-monitor
+```
+
+Build a specific command for your current OS:
+```bash
+make monitor
+```
+
+See all available targets:
+```bash
+make help
+```
+
+Linux binaries will be placed in `bin/linux/jax-ov/` directory.
+
+### Using Go directly
+
+Build a specific command:
+```bash
+go build -o monitor ./cmd/monitor
+```
+
+Build for Linux:
+```bash
+GOOS=linux GOARCH=amd64 go build -o monitor ./cmd/monitor
+```
+
 ## Usage
 
 ### Commands
 
-The project includes six main commands:
+The project includes nine main commands:
 
 1. **monitor** - Real-time WebSocket streaming
 2. **reconstruct** - Historical feed reconstruction
-3. **analyze** - Premium analysis of reconstructed feeds
-4. **extract** - Extract transactions for a specific time period
-5. **logger** - WebSocket logger service (logs to daily files)
-6. **server** - Analysis WebSocket server (serves analyzed data to clients)
+3. **analyze** - Premium analysis of reconstructed feeds (JSON format)
+4. **log-analyze** - Premium analysis of logger log files (JSONL format)
+5. **extract** - Extract transactions for a specific time period (JSON format)
+6. **log-extract** - Extract transactions for a specific time period (JSONL format)
+7. **top-contracts** - Find contracts with largest premiums
+8. **logger** - WebSocket logger service (logs to daily files)
+9. **server** - Analysis WebSocket server (serves analyzed data to clients)
 
 ### Monitor Command (Real-time WebSocket)
 
@@ -162,6 +208,49 @@ This analyzes with 15-minute periods and saves detailed results to a JSON file.
 - `--period` or `-p`: Time period in minutes (default: 5)
 - `--output` or `-o`: Optional output JSON file path
 
+### Log-Analyze Command (JSONL Log File Analysis)
+
+#### Build the log-analyze command
+
+```bash
+go build -o log-analyze ./cmd/log-analyze
+```
+
+#### Analyze premium data from logger log files
+
+```bash
+./log-analyze --input logs/2025-11-28.jsonl
+```
+
+This will:
+1. Read the JSONL log file (created by the logger service)
+2. Calculate total premium (volume × VWAP × 100) for each aggregate
+3. Group by time periods (default: 5 minutes)
+4. Separate premiums by call/put options
+5. Display results in a formatted table
+
+#### Analyze with custom time period
+
+```bash
+./log-analyze --input logs/2025-11-28.jsonl --period 1
+```
+
+This analyzes with 1-minute periods instead of the default 5 minutes.
+
+#### Analyze and save to JSON
+
+```bash
+./log-analyze --input logs/2025-11-28.jsonl --period 15 --output premium_analysis.json
+```
+
+#### Log-Analyze Command-line Flags
+
+- `--input` or `-i`: Input JSONL log file path (required, from logger service)
+- `--period` or `-p`: Time period in minutes (default: 5)
+- `--output` or `-o`: Optional output JSON file path
+
+**Note**: This command works the same as the `analyze` command but reads JSONL format (one JSON object per line) instead of a JSON array. Use this for analyzing log files created by the logger service.
+
 ### Extract Command (Time Period Filtering)
 
 #### Build the extract command
@@ -176,7 +265,7 @@ go build -o extract ./cmd/extract
 ./extract --input AAPL_options_2025-11-30.json --time 9:46 --period 5
 ```
 
-This will extract all transactions between 9:46 AM and 9:51 AM ET (5-minute period) and output them as JSON to the console.
+This will extract all transactions between 9:46 AM and 9:51 AM PT (5-minute period) and output them as JSON to the console.
 
 #### Extract with specific date
 
@@ -184,7 +273,7 @@ This will extract all transactions between 9:46 AM and 9:51 AM ET (5-minute peri
 ./extract --input AAPL_options_2025-11-30.json --time 14:30 --period 10 --date 2025-11-30
 ```
 
-This extracts transactions from 2:30 PM to 2:40 PM ET on November 30, 2025.
+This extracts transactions from 2:30 PM to 2:40 PM PT on November 30, 2025.
 
 #### Extract Command-line Flags
 
@@ -193,7 +282,80 @@ This extracts transactions from 2:30 PM to 2:40 PM ET on November 30, 2025.
 - `--period` or `-p`: Time period in minutes (default: 1)
 - `--date` or `-d`: Date in YYYY-MM-DD format (optional, defaults to today)
 
-**Note**: Times are interpreted in Eastern Time (ET) to match market hours.
+**Note**: Times are interpreted in Pacific Time (PT).
+
+### Log-Extract Command (Time Period Filtering for JSONL Logs)
+
+#### Build the log-extract command
+
+```bash
+go build -o log-extract ./cmd/log-extract
+```
+
+#### Extract transactions for a specific time period from log files
+
+```bash
+./log-extract --input logs/2025-11-28.jsonl --time 9:46 --period 5
+```
+
+This will extract all transactions between 9:46 AM and 9:51 AM PT (5-minute period) from the JSONL log file and output them as JSON to the console.
+
+#### Extract with specific date
+
+```bash
+./log-extract --input logs/2025-11-28.jsonl --time 14:30 --period 10 --date 2025-11-28
+```
+
+This extracts transactions from 2:30 PM to 2:40 PM PT on November 28, 2025.
+
+#### Log-Extract Command-line Flags
+
+- `--input` or `-i`: Input JSONL log file path (required, from logger service)
+- `--time` or `-t`: Start time in HH:MM format (required, e.g., "9:46")
+- `--period` or `-p`: Time period in minutes (default: 1)
+- `--date` or `-d`: Date in YYYY-MM-DD format (optional, defaults to today)
+
+**Note**: Times are interpreted in Pacific Time (PT). This command works the same as the `extract` command but reads JSONL format (one JSON object per line) instead of a JSON array. Use this for extracting time periods from log files created by the logger service.
+
+### Top-Contracts Command (Largest Premium Contracts)
+
+#### Build the top-contracts command
+
+```bash
+go build -o top-contracts ./cmd/top-contracts
+```
+
+#### Find top contracts by total premium
+
+```bash
+./top-contracts --input logs/2025-11-28.jsonl
+```
+
+This will find the top 5 contracts (default) with the largest total premium, calculated as the sum of all premiums (volume × VWAP × 100) for each contract.
+
+#### Find top N contracts
+
+```bash
+./top-contracts --input logs/2025-11-28.jsonl --top 10
+```
+
+This finds the top 10 contracts instead of the default 5.
+
+#### Save results to JSON
+
+```bash
+./top-contracts --input logs/2025-11-28.jsonl --top 10 --output top_contracts.json
+```
+
+This saves the top 10 contracts to a JSON file.
+
+#### Top-Contracts Command-line Flags
+
+- `--input` or `-i`: Input JSON or JSONL file path (required)
+- `--top` or `-t`: Number of top contracts to display (default: 5)
+- `--output` or `-o`: Optional output JSON file path
+
+**Note**: This command works with both JSON (from `reconstruct`) and JSONL (from `logger`) formats. It automatically detects the format. The premium is calculated as the aggregate of all transactions per contract (sum of volume × VWAP × 100 for each contract).
 
 ### Output Format
 
@@ -297,6 +459,44 @@ The extract command outputs a JSON array of all aggregate transactions within th
 ```
 
 The output is written to stdout (console) as JSON, making it easy to pipe to other tools or save to a file.
+
+#### Log-Extract Command Output
+
+The log-extract command outputs a JSON array of all aggregate transactions within the specified time period, identical to the extract command output format. The only difference is that it reads from JSONL log files instead of JSON array files.
+
+#### Top-Contracts Command Output
+
+The top-contracts command outputs a formatted table showing the top contracts by total premium with parsed contract details:
+
+```
+Rank    Underlying    Expiration    Strike    Type    Total Premium              Total Volume              Transactions
+----    ----------    ----------    ------    ----    -------------              ------------              ------------
+1       AAPL          2023-06-16    150.00    CALL    $12,345,678.90            1,500,000                150
+2       AAPL          2023-06-16    150.00    PUT     $9,876,543.21              1,200,000                120
+...
+```
+
+The contract symbol is parsed into separate columns showing:
+- **Underlying**: The stock ticker (e.g., AAPL)
+- **Expiration**: The expiration date in YYYY-MM-DD format
+- **Strike**: The strike price with decimal point
+- **Type**: CALL or PUT
+
+If `--output` is specified, a detailed JSON file is created:
+
+```json
+[
+  {
+    "symbol": "O:AAPL230616C00150000",
+    "total_premium": 12345678.90,
+    "total_volume": 1500000,
+    "option_type": "call",
+    "transaction_count": 150
+  }
+]
+```
+
+**Premium Calculation**: Total premium per contract = sum of all (volume × VWAP × 100) for that contract across all transactions.
 
 ### Logger Service (WebSocket Data Logger)
 
@@ -426,6 +626,12 @@ jax-ov/
 │   │   └── main.go          # Premium analysis CLI
 │   ├── extract/
 │   │   └── main.go          # Time period extraction CLI
+│   ├── log-analyze/
+│   │   └── main.go          # JSONL log file analysis CLI
+│   ├── log-extract/
+│   │   └── main.go          # JSONL log file extraction CLI
+│   ├── top-contracts/
+│   │   └── main.go          # Top contracts by premium CLI
 │   ├── logger/
 │   │   └── main.go          # WebSocket logger service
 │   └── server/
@@ -468,6 +674,15 @@ go run ./cmd/analyze --input AAPL_options_2025-11-30.json --period 5
 
 # Run extract command
 go run ./cmd/extract --input AAPL_options_2025-11-30.json --time 9:46 --period 5
+
+# Run log-analyze command
+go run ./cmd/log-analyze --input logs/2025-11-28.jsonl --period 5
+
+# Run log-extract command
+go run ./cmd/log-extract --input logs/2025-11-28.jsonl --time 9:46 --period 5
+
+# Run top-contracts command
+go run ./cmd/top-contracts --input logs/2025-11-28.jsonl --top 10
 
 # Run logger service
 go run ./cmd/logger --ticker AAPL --mode all --log-dir ./logs

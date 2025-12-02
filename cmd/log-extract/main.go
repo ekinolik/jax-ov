@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 
 func main() {
 	// Parse command-line flags
-	input := flag.String("input", "", "Input JSON file path (required)")
+	input := flag.String("input", "", "Input JSONL log file path (required)")
 	timeStr := flag.String("time", "", "Start time in HH:MM format (required, e.g., 9:46)")
 	period := flag.Int("period", 1, "Time period in minutes (default: 1)")
 	dateStr := flag.String("date", "", "Date in YYYY-MM-DD format (optional, defaults to today)")
@@ -83,25 +84,34 @@ func main() {
 	startTimestamp := startTime.UnixMilli()
 	endTimestamp := endTime.UnixMilli()
 
-	// Read input file
-	data, err := os.ReadFile(*input)
+	// Read JSONL file
+	file, err := os.Open(*input)
 	if err != nil {
 		log.Fatalf("Failed to read input file: %v", err)
 	}
+	defer file.Close()
 
-	// Parse JSON
-	var aggregates []analysis.Aggregate
-	if err := json.Unmarshal(data, &aggregates); err != nil {
-		log.Fatalf("Failed to parse JSON: %v", err)
-	}
-
-	// Filter aggregates within time range
+	// Parse JSONL and filter aggregates within time range
 	var filtered []analysis.Aggregate
-	for _, agg := range aggregates {
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+
+	for scanner.Scan() {
+		lineCount++
+		var agg analysis.Aggregate
+		if err := json.Unmarshal(scanner.Bytes(), &agg); err != nil {
+			// Skip invalid lines but continue processing
+			continue
+		}
+
 		// Check if aggregate's start timestamp falls within the range
 		if agg.StartTimestamp >= startTimestamp && agg.StartTimestamp < endTimestamp {
 			filtered = append(filtered, agg)
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading log file: %v", err)
 	}
 
 	// Output filtered aggregates as JSON to stdout
