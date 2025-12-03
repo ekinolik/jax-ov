@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
@@ -128,4 +129,87 @@ func GetNewAggregatesSince(logDir string, sinceTimestamp int64) ([]analysis.Aggr
 	}
 
 	return newAggregates, nil
+}
+
+// GetTransactionsForTimePeriod reads a log file and returns all transactions within a time period
+func GetTransactionsForTimePeriod(logDir string, dateStr string, timeStr string, periodMinutes int) ([]analysis.Aggregate, error) {
+	// Load Pacific timezone
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load timezone: %w", err)
+	}
+
+	// Parse time (HH:MM format)
+	timeParts := strings.Split(timeStr, ":")
+	if len(timeParts) != 2 {
+		return nil, fmt.Errorf("invalid time format, expected HH:MM")
+	}
+
+	var hour, minute int
+	if _, err := fmt.Sscanf(timeParts[0], "%d", &hour); err != nil {
+		return nil, fmt.Errorf("invalid hour in time: %w", err)
+	}
+	if _, err := fmt.Sscanf(timeParts[1], "%d", &minute); err != nil {
+		return nil, fmt.Errorf("invalid minute in time: %w", err)
+	}
+
+	if hour < 0 || hour > 23 {
+		return nil, fmt.Errorf("hour must be between 0 and 23")
+	}
+	if minute < 0 || minute > 59 {
+		return nil, fmt.Errorf("minute must be between 0 and 59")
+	}
+
+	// Parse date or use today
+	var date time.Time
+	if dateStr != "" {
+		// Parse date string and interpret it in Pacific Time
+		dateStrWithTime := dateStr + " 00:00:00"
+		date, err = time.ParseInLocation("2006-01-02 15:04:05", dateStrWithTime, loc)
+		if err != nil {
+			return nil, fmt.Errorf("invalid date format, expected YYYY-MM-DD: %w", err)
+		}
+	} else {
+		// Use today in Pacific Time
+		now := time.Now().In(loc)
+		date = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	}
+
+	// Create start time in Pacific Time
+	startTime := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, loc)
+	endTime := startTime.Add(time.Duration(periodMinutes) * time.Minute)
+
+	// Convert to Unix milliseconds for comparison
+	startTimestamp := startTime.UnixMilli()
+	endTimestamp := endTime.UnixMilli()
+
+	// Get log file path
+	var logFile string
+	if dateStr != "" {
+		logFile = GetLogFileForDate(logDir, dateStr)
+	} else {
+		logFile = GetCurrentDayLogFile(logDir)
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return []analysis.Aggregate{}, nil
+	}
+
+	// Read and filter aggregates
+	aggregates, err := ReadLogFile(logFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read log file: %w", err)
+	}
+
+	// Filter aggregates within time range
+	var filtered []analysis.Aggregate
+	for _, agg := range aggregates {
+		// Check if aggregate's start timestamp falls within the range
+		if agg.StartTimestamp >= startTimestamp && agg.StartTimestamp < endTimestamp {
+			filtered = append(filtered, agg)
+		}
+	}
+
+	return filtered, nil
 }

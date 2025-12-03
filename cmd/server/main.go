@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
@@ -90,11 +92,60 @@ func main() {
 		}()
 	})
 
+	// HTTP GET handler for transactions endpoint
+	http.HandleFunc("/transactions", func(w http.ResponseWriter, r *http.Request) {
+		// Only allow GET requests
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get query parameters
+		dateStr := r.URL.Query().Get("date")
+		timeStr := r.URL.Query().Get("time")
+		periodStr := r.URL.Query().Get("period")
+
+		// Time is required
+		if timeStr == "" {
+			http.Error(w, "time parameter is required (format: HH:MM)", http.StatusBadRequest)
+			return
+		}
+
+		// Default period to 1 minute if not provided
+		periodMinutes := 1
+		if periodStr != "" {
+			period, err := strconv.Atoi(periodStr)
+			if err != nil || period <= 0 {
+				http.Error(w, "invalid period, must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			periodMinutes = period
+		}
+
+		// Get transactions for the time period
+		transactions, err := server.GetTransactionsForTimePeriod(*logDir, dateStr, timeStr, periodMinutes)
+		if err != nil {
+			log.Printf("Error getting transactions: %v", err)
+			http.Error(w, fmt.Sprintf("Error getting transactions: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Set content type and return JSON array
+		w.Header().Set("Content-Type", "application/json")
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(transactions); err != nil {
+			log.Printf("Error encoding JSON: %v", err)
+			http.Error(w, "Error encoding response", http.StatusInternalServerError)
+			return
+		}
+	})
+
 	// Root handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(`<html><body><h1>Options Analysis WebSocket Server</h1><p>Connect to ws://` + *host + `:` + *port + `/analyze</p></body></html>`))
+			w.Write([]byte(`<html><body><h1>Options Analysis WebSocket Server</h1><p>Connect to ws://` + *host + `:` + *port + `/analyze</p><p>Get transactions: GET http://` + *host + `:` + *port + `/transactions?date=YYYY-MM-DD&time=HH:MM&period=N</p></body></html>`))
 		}
 	})
 
@@ -156,7 +207,8 @@ func main() {
 
 	// Start HTTP server
 	addr := fmt.Sprintf("%s:%s", *host, *port)
-	log.Printf("Starting WebSocket server on %s", addr)
+	log.Printf("Starting server on %s", addr)
 	log.Printf("WebSocket endpoint: ws://%s/analyze", addr)
+	log.Printf("Transactions endpoint: http://%s/transactions?date=YYYY-MM-DD&time=HH:MM&period=N", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

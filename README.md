@@ -608,6 +608,46 @@ After the initial history, clients receive new time period summaries as they bec
 
 **Note**: History and update messages are identical in format - clients cannot distinguish between them. All messages are sent as individual JSON objects (JSONL-like format over WebSocket).
 
+#### Transactions HTTP Endpoint
+
+**Endpoint**: `GET http://host:port/transactions?date=YYYY-MM-DD&time=HH:MM&period=N`
+
+**Query Parameters**:
+- `date` (optional): Date in YYYY-MM-DD format. Defaults to current date (Pacific Time).
+- `time` (required): Start time in HH:MM format (e.g., "9:46"). Times are interpreted in Pacific Time.
+- `period` (optional): Time period in minutes. Defaults to 1 minute.
+
+**Response Format**:
+
+Returns a single JSON array of all transactions (aggregates) within the specified time period:
+
+```json
+[
+  {
+    "ev": "A",
+    "sym": "O:AAPL230616C00150000",
+    "v": 150,
+    "av": 1500,
+    "op": 150.50,
+    "vw": 150.65,
+    "o": 150.50,
+    "h": 151.20,
+    "l": 150.30,
+    "c": 150.80,
+    "a": 150.65,
+    "z": 10,
+    "s": 1701432245000,
+    "e": 1701432246000
+  }
+]
+```
+
+**Examples**:
+- `GET http://localhost:8080/transactions?time=9:46&period=5` - Get transactions from 9:46 AM to 9:51 AM PT for current day
+- `GET http://localhost:8080/transactions?date=2025-11-28&time=14:30&period=10` - Get transactions from 2:30 PM to 2:40 PM PT on November 28, 2025
+
+**Note**: This is an HTTP GET endpoint (not WebSocket). It returns a single JSON response with all matching transactions. The response is a JSON array, not JSONL format.
+
 #### Running Both Services
 
 ```bash
