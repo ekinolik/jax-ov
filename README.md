@@ -561,7 +561,14 @@ This will:
 
 #### WebSocket Protocol
 
-**Endpoint**: `ws://host:port/analyze`
+**Endpoint**: `ws://host:port/analyze?date=YYYY-MM-DD`
+
+**Query Parameters**:
+- `date` (optional): Date in YYYY-MM-DD format. If not provided, defaults to the current date (Pacific Time). Used to specify which log file to read for historical data.
+
+**Examples**:
+- `ws://localhost:8080/analyze` - Connects to current day's data
+- `ws://localhost:8080/analyze?date=2025-11-28` - Connects to November 28, 2025 data
 
 **Message Format**:
 

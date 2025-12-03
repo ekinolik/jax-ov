@@ -41,15 +41,31 @@ func main() {
 		// Register connection
 		wsServer.Register(conn)
 
-		// Send historical data immediately
-		summaries, err := server.AnalyzeCurrentDay(*logDir, *period)
+		// Get date from query parameter, default to current date
+		dateStr := r.URL.Query().Get("date")
+		if dateStr == "" {
+			// Use current date in Pacific timezone
+			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+			dateStr = time.Now().In(pacificTZ).Format("2006-01-02")
+		}
+
+		// Validate date format (YYYY-MM-DD)
+		_, err = time.Parse("2006-01-02", dateStr)
 		if err != nil {
-			log.Printf("Error getting historical data: %v", err)
+			log.Printf("Invalid date format: %s, using current date", dateStr)
+			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+			dateStr = time.Now().In(pacificTZ).Format("2006-01-02")
+		}
+
+		// Send historical data immediately for the specified date
+		summaries, err := server.AnalyzeDate(*logDir, dateStr, *period)
+		if err != nil {
+			log.Printf("Error getting historical data for date %s: %v", dateStr, err)
 		} else {
 			if err := wsServer.SendHistory(conn, summaries); err != nil {
 				log.Printf("Error sending history: %v", err)
 			} else {
-				log.Printf("Sent %d historical periods to new client", len(summaries))
+				log.Printf("Sent %d historical periods to new client for date %s", len(summaries), dateStr)
 			}
 		}
 
