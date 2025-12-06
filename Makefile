@@ -12,6 +12,9 @@ BINARY_DIR=bin
 LINUX_BINARY_DIR=$(BINARY_DIR)/linux/jax-ov
 GOOS_LINUX=linux
 GOARCH=amd64
+VERSION_FILE=.version
+PACKAGE_DIR=package
+TARBALL_DIR=$(PACKAGE_DIR)/jax-ov
 
 # Commands to build
 COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server
@@ -125,6 +128,8 @@ clean:
 	$(GOCLEAN)
 	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server
 	@rm -rf $(BINARY_DIR)
+	@rm -rf $(PACKAGE_DIR)
+	@rm -f jax-ov-*.tar.gz
 	@echo "Clean complete"
 
 # Clean only Linux binaries
@@ -145,6 +150,33 @@ deps:
 	$(GOGET) -d -v
 	$(GOCMD) mod tidy
 
+# Package - Create tarball with version number
+.PHONY: package
+package:
+	@echo "Creating package..."
+	@if [ ! -f $(VERSION_FILE) ]; then \
+		echo "1.0.00000" > $(VERSION_FILE); \
+	fi
+	@VERSION=$$(cat $(VERSION_FILE)); \
+	MAJOR=$$(echo $$VERSION | cut -d. -f1); \
+	MINOR=$$(echo $$VERSION | cut -d. -f2); \
+	BUILD_STR=$$(echo $$VERSION | cut -d. -f3); \
+	BUILD=$$((10#$$BUILD_STR + 1)); \
+	BUILD_FORMATTED=$$(printf "%05d" $$BUILD); \
+	NEW_VERSION="$$MAJOR.$$MINOR.$$BUILD_FORMATTED"; \
+	echo "$$NEW_VERSION" > .version.tmp && \
+	echo "Building package version: $$NEW_VERSION" && \
+	$(MAKE) linux-all && \
+	NEW_VERSION=$$(cat .version.tmp) && \
+	rm -rf $(PACKAGE_DIR) && \
+	mkdir -p $(TARBALL_DIR) && \
+	cp -r $(LINUX_BINARY_DIR)/* $(TARBALL_DIR)/ && \
+	echo "$$NEW_VERSION" > $(TARBALL_DIR)/VERSION && \
+	cd $(PACKAGE_DIR) && tar -czf ../jax-ov-$$NEW_VERSION.tar.gz jax-ov && \
+	cd .. && rm -rf $(PACKAGE_DIR) && \
+	mv .version.tmp $(VERSION_FILE) && \
+	echo "Package created: jax-ov-$$NEW_VERSION.tar.gz"
+
 # Help
 .PHONY: help
 help:
@@ -152,6 +184,7 @@ help:
 	@echo "  all              - Build all commands for current OS (default)"
 	@echo "  linux            - Build all commands for Linux (individual targets)"
 	@echo "  linux-all        - Build all commands for Linux in bin/linux/jax-ov/ directory"
+	@echo "  package          - Create tarball package with version number"
 	@echo "  <command>        - Build specific command (e.g., 'make monitor')"
 	@echo "  linux-<command>  - Build specific command for Linux (e.g., 'make linux-monitor')"
 	@echo "  clean            - Remove all build artifacts"

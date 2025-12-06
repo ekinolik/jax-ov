@@ -1,0 +1,99 @@
+# Upstreams (backends)
+upstream chaossignal_main {
+    server 127.0.0.1:443;
+}
+
+upstream ov_ws_backend {
+    server 127.0.0.1:4000;
+}
+
+upstream ov_api_backend {
+    server 127.0.0.1:4000;
+}
+
+# Redirect all HTTP to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name chaossignal.io www.chaossignal.io ov.chaossignal.io;
+
+    # Simple redirect to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+# -------------------------------
+# chaossignal.io / www.chaossignal.io
+# -------------------------------
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name chaossignal.io www.chaossignal.io;
+
+    # TLS certs (wildcard + root)
+    ssl_certificate     /etc/letsencrypt/live/chaossignal.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/chaossignal.io/privkey.pem;
+
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_prefer_server_ciphers on;
+
+    # Basic hardening (optional, tweak as desired)
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # "Passthrough" reverse proxy – app handles logic, nginx just forwards
+    location / {
+        proxy_pass https://chaossignal_main;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# -------------------------------
+# ov.chaossignal.io with TLS termination
+# -------------------------------
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ov.chaossignal.io;
+
+    ssl_certificate     /etc/letsencrypt/live/chaossignal.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/chaossignal.io/privkey.pem;
+
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_prefer_server_ciphers on;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # --- WebSocket: /analyze ---
+    location /analyze {
+        proxy_pass http://ov_ws_backend;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # --- HTTP API: /transactions ---
+    location /transactions {
+        proxy_pass http://ov_api_backend;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # (Optional) fallback for any other paths
+    location / {
+        return 404;
+    }
+}
+

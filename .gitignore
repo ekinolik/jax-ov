@@ -51,3 +51,11 @@ builds/
 
 # build directory
 /bin
+
+# version file (track .version, but ignore .version* files with suffixes)
+.version.*
+.version~
+
+# package files
+jax-ov-*.tar.gz
+package/
