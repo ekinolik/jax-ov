@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00005] - 2025-12-06
+
+### Changed
+- Server now requires ticker parameter for WebSocket and HTTP endpoints
+- Server reads and responds only with data for the specified ticker's log file
+
 ## [1.0.00004] - 2025-12-06
 
 ### Changed

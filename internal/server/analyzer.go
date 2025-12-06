@@ -39,6 +39,13 @@ func ReadLogFile(filename string) ([]analysis.Aggregate, error) {
 	return aggregates, nil
 }
 
+// GetLogFileForTickerAndDate returns the log file path for a specific ticker and date
+// Format: SYMBOL_YYYY-MM-DD.jsonl
+func GetLogFileForTickerAndDate(logDir string, ticker string, dateStr string) string {
+	filename := fmt.Sprintf("%s_%s.jsonl", ticker, dateStr)
+	return filepath.Join(logDir, filename)
+}
+
 // GetLogFilesForDate returns all log file paths for a specific date
 // With the new format, there are multiple files per date (one per symbol): SYMBOL_YYYY-MM-DD.jsonl
 func GetLogFilesForDate(logDir string, dateStr string) ([]string, error) {
@@ -112,6 +119,34 @@ func AnalyzeDate(logDir string, dateStr string, periodMinutes int) ([]analysis.T
 	return summaries, nil
 }
 
+// AnalyzeTickerAndDate reads and analyzes aggregates for a specific ticker and date
+// Reads only the log file for that ticker: SYMBOL_YYYY-MM-DD.jsonl
+func AnalyzeTickerAndDate(logDir string, ticker string, dateStr string, periodMinutes int) ([]analysis.TimePeriodSummary, error) {
+	logFile := GetLogFileForTickerAndDate(logDir, ticker, dateStr)
+
+	// Check if file exists
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		// Return empty results if no log file exists
+		return []analysis.TimePeriodSummary{}, nil
+	}
+
+	aggregates, err := ReadLogFile(logFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read log file: %w", err)
+	}
+
+	if len(aggregates) == 0 {
+		return []analysis.TimePeriodSummary{}, nil
+	}
+
+	summaries, err := analysis.AggregatePremiums(aggregates, periodMinutes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to aggregate premiums: %w", err)
+	}
+
+	return summaries, nil
+}
+
 // GetNewAggregatesSince reads all log files for the current day and returns aggregates with timestamps >= sinceTimestamp
 func GetNewAggregatesSince(logDir string, sinceTimestamp int64) ([]analysis.Aggregate, error) {
 	// Get current date in Pacific timezone
@@ -134,8 +169,8 @@ func GetNewAggregatesSince(logDir string, sinceTimestamp int64) ([]analysis.Aggr
 	return newAggregates, nil
 }
 
-// GetTransactionsForTimePeriod reads a log file and returns all transactions within a time period
-func GetTransactionsForTimePeriod(logDir string, dateStr string, timeStr string, periodMinutes int) ([]analysis.Aggregate, error) {
+// GetTransactionsForTickerAndTimePeriod reads a log file for a specific ticker and returns all transactions within a time period
+func GetTransactionsForTickerAndTimePeriod(logDir string, ticker string, dateStr string, timeStr string, periodMinutes int) ([]analysis.Aggregate, error) {
 	// Load Pacific timezone
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
@@ -193,10 +228,18 @@ func GetTransactionsForTimePeriod(logDir string, dateStr string, timeStr string,
 		dateStr = now.Format("2006-01-02")
 	}
 
-	// Read all log files for the date
-	aggregates, err := ReadAllLogFilesForDate(logDir, dateStr)
+	// Get log file for the specific ticker and date
+	logFile := GetLogFileForTickerAndDate(logDir, ticker, dateStr)
+
+	// Check if file exists
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return []analysis.Aggregate{}, nil
+	}
+
+	// Read aggregates from the ticker's log file
+	aggregates, err := ReadLogFile(logFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read log files: %w", err)
+		return nil, fmt.Errorf("failed to read log file: %w", err)
 	}
 
 	// Filter aggregates within time range

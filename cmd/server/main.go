@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
@@ -34,14 +35,23 @@ func main() {
 
 	// HTTP handler for WebSocket connections
 	http.HandleFunc("/analyze", func(w http.ResponseWriter, r *http.Request) {
+		// Get ticker from query parameter (required)
+		ticker := r.URL.Query().Get("ticker")
+		if ticker == "" {
+			log.Printf("ticker parameter is required, closing connection")
+			http.Error(w, "ticker parameter is required", http.StatusBadRequest)
+			return
+		}
+		ticker = strings.ToUpper(ticker)
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("WebSocket upgrade error: %v", err)
 			return
 		}
 
-		// Register connection
-		wsServer.Register(conn)
+		// Register connection with ticker
+		wsServer.Register(conn, ticker)
 
 		// Get date from query parameter, default to current date
 		dateStr := r.URL.Query().Get("date")
@@ -59,15 +69,15 @@ func main() {
 			dateStr = time.Now().In(pacificTZ).Format("2006-01-02")
 		}
 
-		// Send historical data immediately for the specified date
-		summaries, err := server.AnalyzeDate(*logDir, dateStr, *period)
+		// Send historical data immediately for the specified ticker and date
+		summaries, err := server.AnalyzeTickerAndDate(*logDir, ticker, dateStr, *period)
 		if err != nil {
-			log.Printf("Error getting historical data for date %s: %v", dateStr, err)
+			log.Printf("Error getting historical data for ticker %s, date %s: %v", ticker, dateStr, err)
 		} else {
 			if err := wsServer.SendHistory(conn, summaries); err != nil {
 				log.Printf("Error sending history: %v", err)
 			} else {
-				log.Printf("Sent %d historical periods to new client for date %s", len(summaries), dateStr)
+				log.Printf("Sent %d historical periods to new client for ticker %s, date %s", len(summaries), ticker, dateStr)
 			}
 		}
 
@@ -101,9 +111,17 @@ func main() {
 		}
 
 		// Get query parameters
+		ticker := r.URL.Query().Get("ticker")
 		dateStr := r.URL.Query().Get("date")
 		timeStr := r.URL.Query().Get("time")
 		periodStr := r.URL.Query().Get("period")
+
+		// Ticker is required
+		if ticker == "" {
+			http.Error(w, "ticker parameter is required", http.StatusBadRequest)
+			return
+		}
+		ticker = strings.ToUpper(ticker)
 
 		// Time is required
 		if timeStr == "" {
@@ -122,8 +140,8 @@ func main() {
 			periodMinutes = period
 		}
 
-		// Get transactions for the time period
-		transactions, err := server.GetTransactionsForTimePeriod(*logDir, dateStr, timeStr, periodMinutes)
+		// Get transactions for the time period and ticker
+		transactions, err := server.GetTransactionsForTickerAndTimePeriod(*logDir, ticker, dateStr, timeStr, periodMinutes)
 		if err != nil {
 			log.Printf("Error getting transactions: %v", err)
 			http.Error(w, fmt.Sprintf("Error getting transactions: %v", err), http.StatusInternalServerError)
@@ -145,61 +163,60 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte(`<html><body><h1>Options Analysis WebSocket Server</h1><p>Connect to ws://` + *host + `:` + *port + `/analyze</p><p>Get transactions: GET http://` + *host + `:` + *port + `/transactions?date=YYYY-MM-DD&time=HH:MM&period=N</p></body></html>`))
+			w.Write([]byte(`<html><body><h1>Options Analysis WebSocket Server</h1><p>Connect to ws://` + *host + `:` + *port + `/analyze?ticker=SYMBOL&date=YYYY-MM-DD</p><p>Get transactions: GET http://` + *host + `:` + *port + `/transactions?ticker=SYMBOL&date=YYYY-MM-DD&time=HH:MM&period=N</p></body></html>`))
 		}
 	})
 
-	// Start analysis loop
+	// Start analysis loop - analyze per ticker and send updates to subscribed clients
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
+		updateTicker := time.NewTicker(1 * time.Minute)
+		defer updateTicker.Stop()
 
-		// Track last processed period end timestamp
-		var lastPeriodEnd int64 = 0
-
-		// Initial analysis on startup
-		summaries, err := server.AnalyzeCurrentDay(*logDir, *period)
-		if err != nil {
-			log.Printf("Error analyzing current day: %v", err)
-		} else {
-			log.Printf("Initial analysis: %d time periods", len(summaries))
-			if len(summaries) > 0 {
-				lastSummary := summaries[len(summaries)-1]
-				lastPeriodEnd = lastSummary.PeriodEnd.UnixMilli()
-			}
-		}
+		// Track last processed period end timestamp per ticker
+		lastPeriodEnds := make(map[string]int64)
 
 		// Analyze and broadcast every minute
-		for range ticker.C {
-			summaries, err := server.AnalyzeCurrentDay(*logDir, *period)
-			if err != nil {
-				log.Printf("Error analyzing current day: %v", err)
-				continue
-			}
+		for range updateTicker.C {
+			// Get current date in Pacific timezone
+			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+			dateStr := time.Now().In(pacificTZ).Format("2006-01-02")
 
-			if len(summaries) == 0 {
-				continue
-			}
+			// Get all unique tickers from connected clients
+			tickers := wsServer.GetSubscribedTickers()
 
-			// Find the latest complete period
-			now := time.Now()
-			periodDuration := time.Duration(*period) * time.Minute
-
-			var latestCompleteSummary *analysis.TimePeriodSummary
-			for i := len(summaries) - 1; i >= 0; i-- {
-				if now.Sub(summaries[i].PeriodEnd) >= periodDuration {
-					latestCompleteSummary = &summaries[i]
-					break
+			// Analyze and send updates for each ticker
+			for ticker := range tickers {
+				summaries, err := server.AnalyzeTickerAndDate(*logDir, ticker, dateStr, *period)
+				if err != nil {
+					log.Printf("Error analyzing ticker %s: %v", ticker, err)
+					continue
 				}
-			}
 
-			// Send update if we have a new complete period
-			if latestCompleteSummary != nil {
-				periodEnd := latestCompleteSummary.PeriodEnd.UnixMilli()
-				if periodEnd > lastPeriodEnd {
-					wsServer.SendUpdate(*latestCompleteSummary)
-					lastPeriodEnd = periodEnd
-					log.Printf("Sent update for period ending at %s", latestCompleteSummary.PeriodEnd.Format("15:04:05"))
+				if len(summaries) == 0 {
+					continue
+				}
+
+				// Find the latest complete period
+				now := time.Now()
+				periodDuration := time.Duration(*period) * time.Minute
+
+				var latestCompleteSummary *analysis.TimePeriodSummary
+				for i := len(summaries) - 1; i >= 0; i-- {
+					if now.Sub(summaries[i].PeriodEnd) >= periodDuration {
+						latestCompleteSummary = &summaries[i]
+						break
+					}
+				}
+
+				// Send update if we have a new complete period for this ticker
+				if latestCompleteSummary != nil {
+					periodEnd := latestCompleteSummary.PeriodEnd.UnixMilli()
+					lastPeriodEnd, exists := lastPeriodEnds[ticker]
+					if !exists || periodEnd > lastPeriodEnd {
+						wsServer.SendUpdateForTicker(ticker, *latestCompleteSummary)
+						lastPeriodEnds[ticker] = periodEnd
+						log.Printf("Sent update for ticker %s, period ending at %s", ticker, latestCompleteSummary.PeriodEnd.Format("15:04:05"))
+					}
 				}
 			}
 		}
@@ -209,6 +226,6 @@ func main() {
 	addr := fmt.Sprintf("%s:%s", *host, *port)
 	log.Printf("Starting server on %s", addr)
 	log.Printf("WebSocket endpoint: ws://%s/analyze", addr)
-	log.Printf("Transactions endpoint: http://%s/transactions?date=YYYY-MM-DD&time=HH:MM&period=N", addr)
+	log.Printf("Transactions endpoint: http://%s/transactions?ticker=SYMBOL&date=YYYY-MM-DD&time=HH:MM&period=N", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

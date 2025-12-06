@@ -573,14 +573,15 @@ This will:
 
 #### WebSocket Protocol
 
-**Endpoint**: `ws://host:port/analyze?date=YYYY-MM-DD`
+**Endpoint**: `ws://host:port/analyze?ticker=SYMBOL&date=YYYY-MM-DD`
 
 **Query Parameters**:
+- `ticker` (required): Underlying stock ticker (e.g., "AAPL", "TSLA"). The server will only return data for this ticker.
 - `date` (optional): Date in YYYY-MM-DD format. If not provided, defaults to the current date (Pacific Time). Used to specify which log file to read for historical data.
 
 **Examples**:
-- `ws://localhost:8080/analyze` - Connects to current day's data
-- `ws://localhost:8080/analyze?date=2025-11-28` - Connects to November 28, 2025 data
+- `ws://localhost:8080/analyze?ticker=AAPL` - Connects to current day's AAPL data
+- `ws://localhost:8080/analyze?ticker=TSLA&date=2025-11-28` - Connects to November 28, 2025 TSLA data
 
 **Message Format**:
 
@@ -622,9 +623,10 @@ After the initial history, clients receive new time period summaries as they bec
 
 #### Transactions HTTP Endpoint
 
-**Endpoint**: `GET http://host:port/transactions?date=YYYY-MM-DD&time=HH:MM&period=N`
+**Endpoint**: `GET http://host:port/transactions?ticker=SYMBOL&date=YYYY-MM-DD&time=HH:MM&period=N`
 
 **Query Parameters**:
+- `ticker` (required): Underlying stock ticker (e.g., "AAPL", "TSLA"). The server will only return transactions for this ticker.
 - `date` (optional): Date in YYYY-MM-DD format. Defaults to current date (Pacific Time).
 - `time` (required): Start time in HH:MM format (e.g., "9:46"). Times are interpreted in Pacific Time.
 - `period` (optional): Time period in minutes. Defaults to 1 minute.
@@ -655,8 +657,8 @@ Returns a single JSON array of all transactions (aggregates) within the specifie
 ```
 
 **Examples**:
-- `GET http://localhost:8080/transactions?time=9:46&period=5` - Get transactions from 9:46 AM to 9:51 AM PT for current day
-- `GET http://localhost:8080/transactions?date=2025-11-28&time=14:30&period=10` - Get transactions from 2:30 PM to 2:40 PM PT on November 28, 2025
+- `GET http://localhost:8080/transactions?ticker=AAPL&time=9:46&period=5` - Get AAPL transactions from 9:46 AM to 9:51 AM PT for current day
+- `GET http://localhost:8080/transactions?ticker=TSLA&date=2025-11-28&time=14:30&period=10` - Get TSLA transactions from 2:30 PM to 2:40 PM PT on November 28, 2025
 
 **Note**: This is an HTTP GET endpoint (not WebSocket). It returns a single JSON response with all matching transactions. The response is a JSON array, not JSONL format.
 

@@ -16,9 +16,14 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// ClientInfo stores information about a connected client
+type ClientInfo struct {
+	Ticker string
+}
+
 // Server manages WebSocket connections and broadcasts messages
 type Server struct {
-	clients    map[*websocket.Conn]bool
+	clients    map[*websocket.Conn]*ClientInfo
 	broadcast  chan analysis.TimePeriodSummary
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
@@ -28,7 +33,7 @@ type Server struct {
 // NewServer creates a new WebSocket server
 func NewServer() *Server {
 	return &Server{
-		clients:    make(map[*websocket.Conn]bool),
+		clients:    make(map[*websocket.Conn]*ClientInfo),
 		broadcast:  make(chan analysis.TimePeriodSummary, 256),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
@@ -39,11 +44,11 @@ func NewServer() *Server {
 func (s *Server) Run() {
 	for {
 		select {
-		case conn := <-s.register:
-			s.mu.Lock()
-			s.clients[conn] = true
-			s.mu.Unlock()
-			log.Printf("Client connected. Total clients: %d", len(s.clients))
+		case <-s.register:
+			s.mu.RLock()
+			clientCount := len(s.clients)
+			s.mu.RUnlock()
+			log.Printf("Client connected. Total clients: %d", clientCount)
 
 		case conn := <-s.unregister:
 			s.mu.Lock()
@@ -55,6 +60,8 @@ func (s *Server) Run() {
 			log.Printf("Client disconnected. Total clients: %d", len(s.clients))
 
 		case message := <-s.broadcast:
+			// Broadcast is now handled per-ticker in SendUpdateForTicker
+			// This channel is kept for backward compatibility but won't be used
 			s.mu.RLock()
 			for conn := range s.clients {
 				err := conn.WriteJSON(message)
@@ -122,15 +129,53 @@ func (s *Server) SendHistory(conn *websocket.Conn, summaries []analysis.TimePeri
 	return nil
 }
 
-// SendUpdate sends an update to all clients
-func (s *Server) SendUpdate(summary analysis.TimePeriodSummary) {
-	// Send the summary directly, not wrapped in a Message struct
-	s.Broadcast(summary)
+// SendUpdate sends an update to all clients subscribed to a specific ticker
+func (s *Server) SendUpdateForTicker(ticker string, summary analysis.TimePeriodSummary) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for conn, info := range s.clients {
+		if info != nil && info.Ticker == ticker {
+			err := conn.WriteJSON(summary)
+			if err != nil {
+				log.Printf("Error writing to client: %v", err)
+				conn.Close()
+				s.mu.RUnlock()
+				s.mu.Lock()
+				delete(s.clients, conn)
+				s.mu.Unlock()
+				s.mu.RLock()
+			}
+		}
+	}
 }
 
-// Register registers a new client connection
-func (s *Server) Register(conn *websocket.Conn) {
-	s.register <- conn
+// GetSubscribedTickers returns a map of all tickers that have active subscriptions
+func (s *Server) GetSubscribedTickers() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tickers := make(map[string]bool)
+	for _, info := range s.clients {
+		if info != nil && info.Ticker != "" {
+			tickers[info.Ticker] = true
+		}
+	}
+	return tickers
+}
+
+// Register registers a new client connection with a ticker
+func (s *Server) Register(conn *websocket.Conn, ticker string) {
+	s.mu.Lock()
+	s.clients[conn] = &ClientInfo{Ticker: ticker}
+	clientCount := len(s.clients)
+	s.mu.Unlock()
+	log.Printf("Client connected for ticker %s. Total clients: %d", ticker, clientCount)
+	// Send to register channel to trigger any other handlers
+	select {
+	case s.register <- conn:
+	default:
+	}
 }
 
 // Unregister unregisters a client connection
