@@ -4,16 +4,22 @@
 
 When making any code changes or updates to this project:
 
-1. Check the `.version` file to get the current version number
-2. Increment the version number internally by 1 (do NOT modify the .version file itself)
-3. Add an entry to `CHANGELOG.md` with:
-   - The incremented version number in brackets (e.g., `[1.0.00002]`)
+1. Read the current version from the `.version` file
+2. **IMPORTANT**: Increment the version number by 1 FIRST (do NOT modify the .version file itself)
+3. Use the INCREMENTED version number (not the current one) in the CHANGELOG entry
+4. Add an entry to `CHANGELOG.md` with:
+   - The INCREMENTED version number in brackets (e.g., if .version is `1.0.00003`, use `[1.0.00004]`)
    - Today's date in YYYY-MM-DD format
    - A brief, simple description of what changed under appropriate section (Added/Changed/Fixed/Removed)
 
+Example:
+- Current version in `.version`: `1.0.00003`
+- Increment to: `1.0.00004`
+- CHANGELOG entry: `## [1.0.00004] - 2025-12-06`
+
 Example format:
 ```markdown
-## [1.0.00002] - 2025-12-06
+## [1.0.00004] - 2025-12-06
 
 ### Changed
 - Brief description of the change

@@ -172,6 +172,7 @@ package:
 	mkdir -p $(TARBALL_DIR) && \
 	cp -r $(LINUX_BINARY_DIR)/* $(TARBALL_DIR)/ && \
 	echo "$$NEW_VERSION" > $(TARBALL_DIR)/VERSION && \
+	cp CHANGELOG.md $(TARBALL_DIR)/ && \
 	cd $(PACKAGE_DIR) && tar -czf ../jax-ov-$$NEW_VERSION.tar.gz jax-ov && \
 	cd .. && rm -rf $(PACKAGE_DIR) && \
 	mv .version.tmp $(VERSION_FILE) && \

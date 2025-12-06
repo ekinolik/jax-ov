@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.00001] - 2025-12-06
+## [1.0.00004] - 2025-12-06
+
+### Changed
+- Added CHANGELOG.md to packaged tarball
+
+## [1.0.00002] - 2025-12-06
 
 ### Changed
 - Updated logger to support multi-symbol logging with per-symbol log files (format: SYMBOL_YYYY-MM-DD.jsonl)
