@@ -506,30 +506,42 @@ If `--output` is specified, a detailed JSON file is created:
 go build -o logger ./cmd/logger
 ```
 
-#### Start logging WebSocket data
+#### Start logging WebSocket data for all symbols
 
 ```bash
-./logger --ticker AAPL --mode all --log-dir ./logs
+./logger --log-dir ./logs
 ```
 
 This will:
 1. Connect to massive.com WebSocket
-2. Subscribe to all option contracts for the specified ticker
-3. Log each aggregate as a single-line JSON (JSONL format) to daily files
-4. Automatically use the correct file based on current date (YYYY-MM-DD.jsonl)
+2. Subscribe to all option contracts for all underlying symbols
+3. Log each aggregate as a single-line JSON (JSONL format) to per-symbol daily files
+4. Automatically route each aggregate to the correct file based on underlying symbol and current date
+
+#### Start logging for a specific symbol
+
+```bash
+./logger --ticker AAPL --log-dir ./logs
+```
+
+This will filter and log only options for the specified underlying ticker (AAPL in this example).
 
 #### Logger Command-line Flags
 
-- `--ticker` or `-t`: Underlying stock ticker (required, e.g., "AAPL")
+- `--ticker` or `-t`: Underlying stock ticker (optional, e.g., "AAPL"). If not provided, logs all symbols
 - `--mode` or `-m`: Subscription mode - "all" or "contract" (default: "all")
 - `--contract` or `-c`: Specific option contract symbol (required if mode is "contract")
 - `--log-dir`: Log directory path (default: "./logs")
 
 **Log File Format**:
-- Location: `{log-dir}/YYYY-MM-DD.jsonl`
+- Location: `{log-dir}/{SYMBOL}_{YYYY-MM-DD}.jsonl`
 - Format: One JSON object per line (JSONL)
 - Each line: Complete aggregate object matching WebSocket format
-- File automatically rotates daily (new file each day)
+- File automatically rotates daily (new file each day per symbol)
+- Examples:
+  - `AAPL_2025-12-06.jsonl` - All AAPL options for December 6, 2025
+  - `TSLA_2025-12-06.jsonl` - All TSLA options for December 6, 2025
+  - `SPY_2025-12-06.jsonl` - All SPY options for December 6, 2025
 
 ### Server Service (Analysis WebSocket Server)
 

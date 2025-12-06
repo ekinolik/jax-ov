@@ -19,17 +19,13 @@ import (
 
 func main() {
 	// Parse command-line flags
-	ticker := flag.String("ticker", "", "Underlying stock ticker (required, e.g., AAPL)")
+	ticker := flag.String("ticker", "", "Underlying stock ticker (optional, e.g., AAPL). If not provided, logs all symbols")
 	mode := flag.String("mode", "all", "Subscription mode: 'all' or 'contract' (default: 'all')")
 	contract := flag.String("contract", "", "Specific option contract symbol (required if mode is 'contract')")
 	logDir := flag.String("log-dir", "./logs", "Log directory path (default: ./logs)")
 	flag.Parse()
 
 	// Validate flags
-	if *ticker == "" {
-		log.Fatal("Error: --ticker is required")
-	}
-
 	if *mode != "all" && *mode != "contract" {
 		log.Fatal("Error: --mode must be either 'all' or 'contract'")
 	}
@@ -64,15 +60,18 @@ func main() {
 
 	// Determine subscription ticker
 	var subscriptionTicker string
-	var filterPrefix string // Prefix to filter by when mode is "all"
+	var filterTicker string // Underlying ticker to filter by (empty means log all)
 	if *mode == "all" {
-		// Subscribe to all options, then filter by ticker prefix
+		// Always subscribe to all options
 		subscriptionTicker = "*"
-		filterPrefix = fmt.Sprintf("O:%s", *ticker)
+		// If ticker is provided, filter to that underlying symbol
+		if *ticker != "" {
+			filterTicker = strings.ToUpper(*ticker)
+		}
 	} else {
 		// Use the specific contract symbol
 		subscriptionTicker = *contract
-		filterPrefix = "" // No filtering needed for specific contract
+		filterTicker = "" // No filtering needed for specific contract
 	}
 
 	// Subscribe
@@ -81,7 +80,11 @@ func main() {
 	}
 
 	if *mode == "all" {
-		fmt.Printf("Logger started - Subscribed to: %s (filtering for %s*)\n", subscriptionTicker, filterPrefix)
+		if filterTicker != "" {
+			fmt.Printf("Logger started - Subscribed to: %s (filtering for %s options)\n", subscriptionTicker, filterTicker)
+		} else {
+			fmt.Printf("Logger started - Subscribed to: %s (logging all symbols)\n", subscriptionTicker)
+		}
 	} else {
 		fmt.Printf("Logger started - Subscribed to: %s\n", subscriptionTicker)
 	}
@@ -104,15 +107,23 @@ func main() {
 
 	// Define handler for incoming messages
 	handler := func(agg models.EquityAgg) {
-		// Filter by ticker prefix if mode is "all"
-		if filterPrefix != "" && !strings.HasPrefix(agg.Symbol, filterPrefix) {
-			return // Skip this message, it doesn't match our filter
-		}
-
 		// Convert to analysis.Aggregate format
 		analysisAgg := convertToAnalysisAggregate(agg)
 
-		// Write to log file
+		// Extract underlying symbol for filtering
+		if *mode == "all" && filterTicker != "" {
+			underlyingSymbol, err := logger.ExtractUnderlyingSymbol(agg.Symbol)
+			if err != nil {
+				// Skip aggregates we can't parse
+				return
+			}
+			// Filter by underlying ticker if specified
+			if strings.ToUpper(underlyingSymbol) != filterTicker {
+				return // Skip this message, it doesn't match our filter
+			}
+		}
+
+		// Write to log file (will automatically route to correct symbol file)
 		if err := fileLogger.Write(analysisAgg); err != nil {
 			log.Printf("Error writing to log file: %v", err)
 		}

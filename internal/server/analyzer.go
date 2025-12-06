@@ -39,59 +39,65 @@ func ReadLogFile(filename string) ([]analysis.Aggregate, error) {
 	return aggregates, nil
 }
 
-// GetCurrentDayLogFile returns the log file path for the current date
-func GetCurrentDayLogFile(logDir string) string {
-	date := time.Now().Format("2006-01-02")
-	filename := fmt.Sprintf("%s.jsonl", date)
-	return filepath.Join(logDir, filename)
+// GetLogFilesForDate returns all log file paths for a specific date
+// With the new format, there are multiple files per date (one per symbol): SYMBOL_YYYY-MM-DD.jsonl
+func GetLogFilesForDate(logDir string, dateStr string) ([]string, error) {
+	var logFiles []string
+
+	// Read all files in the log directory
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read log directory: %w", err)
+	}
+
+	// Find all files matching the date pattern: *_YYYY-MM-DD.jsonl
+	suffix := fmt.Sprintf("_%s.jsonl", dateStr)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), suffix) {
+			logFiles = append(logFiles, filepath.Join(logDir, entry.Name()))
+		}
+	}
+
+	return logFiles, nil
 }
 
-// GetLogFileForDate returns the log file path for a specific date
-func GetLogFileForDate(logDir string, dateStr string) string {
-	filename := fmt.Sprintf("%s.jsonl", dateStr)
-	return filepath.Join(logDir, filename)
+// ReadAllLogFilesForDate reads all log files for a specific date and returns combined aggregates
+func ReadAllLogFilesForDate(logDir string, dateStr string) ([]analysis.Aggregate, error) {
+	logFiles, err := GetLogFilesForDate(logDir, dateStr)
+	if err != nil {
+		return nil, err
+	}
+
+	var allAggregates []analysis.Aggregate
+
+	// Read aggregates from all log files for this date
+	for _, logFile := range logFiles {
+		aggregates, err := ReadLogFile(logFile)
+		if err != nil {
+			// Log error but continue with other files
+			continue
+		}
+		allAggregates = append(allAggregates, aggregates...)
+	}
+
+	return allAggregates, nil
 }
 
 // AnalyzeCurrentDay reads and analyzes all aggregates for the current day
 func AnalyzeCurrentDay(logDir string, periodMinutes int) ([]analysis.TimePeriodSummary, error) {
-	logFile := GetCurrentDayLogFile(logDir)
+	// Get current date in Pacific timezone
+	pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+	dateStr := time.Now().In(pacificTZ).Format("2006-01-02")
 
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		// Return empty results if no log file exists yet
-		return []analysis.TimePeriodSummary{}, nil
-	}
-
-	aggregates, err := ReadLogFile(logFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
-	}
-
-	if len(aggregates) == 0 {
-		return []analysis.TimePeriodSummary{}, nil
-	}
-
-	summaries, err := analysis.AggregatePremiums(aggregates, periodMinutes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to aggregate premiums: %w", err)
-	}
-
-	return summaries, nil
+	return AnalyzeDate(logDir, dateStr, periodMinutes)
 }
 
 // AnalyzeDate reads and analyzes all aggregates for a specific date
+// Reads all per-symbol log files for the date and combines them
 func AnalyzeDate(logDir string, dateStr string, periodMinutes int) ([]analysis.TimePeriodSummary, error) {
-	logFile := GetLogFileForDate(logDir, dateStr)
-
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		// Return empty results if no log file exists
-		return []analysis.TimePeriodSummary{}, nil
-	}
-
-	aggregates, err := ReadLogFile(logFile)
+	aggregates, err := ReadAllLogFilesForDate(logDir, dateStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
+		return nil, fmt.Errorf("failed to read log files: %w", err)
 	}
 
 	if len(aggregates) == 0 {
@@ -106,18 +112,15 @@ func AnalyzeDate(logDir string, dateStr string, periodMinutes int) ([]analysis.T
 	return summaries, nil
 }
 
-// GetNewAggregatesSince reads the log file and returns aggregates with timestamps >= sinceTimestamp
+// GetNewAggregatesSince reads all log files for the current day and returns aggregates with timestamps >= sinceTimestamp
 func GetNewAggregatesSince(logDir string, sinceTimestamp int64) ([]analysis.Aggregate, error) {
-	logFile := GetCurrentDayLogFile(logDir)
+	// Get current date in Pacific timezone
+	pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+	dateStr := time.Now().In(pacificTZ).Format("2006-01-02")
 
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		return []analysis.Aggregate{}, nil
-	}
-
-	aggregates, err := ReadLogFile(logFile)
+	aggregates, err := ReadAllLogFilesForDate(logDir, dateStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
+		return nil, fmt.Errorf("failed to read log files: %w", err)
 	}
 
 	// Filter aggregates with timestamp >= sinceTimestamp
@@ -183,23 +186,17 @@ func GetTransactionsForTimePeriod(logDir string, dateStr string, timeStr string,
 	startTimestamp := startTime.UnixMilli()
 	endTimestamp := endTime.UnixMilli()
 
-	// Get log file path
-	var logFile string
-	if dateStr != "" {
-		logFile = GetLogFileForDate(logDir, dateStr)
-	} else {
-		logFile = GetCurrentDayLogFile(logDir)
+	// Get date string if not provided
+	if dateStr == "" {
+		loc, _ := time.LoadLocation("America/Los_Angeles")
+		now := time.Now().In(loc)
+		dateStr = now.Format("2006-01-02")
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		return []analysis.Aggregate{}, nil
-	}
-
-	// Read and filter aggregates
-	aggregates, err := ReadLogFile(logFile)
+	// Read all log files for the date
+	aggregates, err := ReadAllLogFilesForDate(logDir, dateStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read log file: %w", err)
+		return nil, fmt.Errorf("failed to read log files: %w", err)
 	}
 
 	// Filter aggregates within time range
