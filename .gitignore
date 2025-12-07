@@ -48,6 +48,7 @@ builds/
 /logger
 /server
 /top-contracts
+/trading-days
 
 # build directory
 /bin

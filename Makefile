@@ -17,7 +17,7 @@ PACKAGE_DIR=package
 TARBALL_DIR=$(PACKAGE_DIR)/jax-ov
 
 # Commands to build
-COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server
+COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server trading-days
 
 # Default target - build for current OS
 .PHONY: all
@@ -75,6 +75,10 @@ server:
 	@echo "Building server..."
 	$(GOBUILD) -o server ./cmd/server
 
+trading-days:
+	@echo "Building trading-days..."
+	$(GOBUILD) -o trading-days ./cmd/trading-days
+
 # Linux-specific builds
 linux-monitor:
 	@echo "Building monitor for Linux..."
@@ -121,12 +125,17 @@ linux-server:
 	@mkdir -p $(LINUX_BINARY_DIR)
 	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/server ./cmd/server
 
+linux-trading-days:
+	@echo "Building trading-days for Linux..."
+	@mkdir -p $(LINUX_BINARY_DIR)
+	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/trading-days ./cmd/trading-days
+
 # Clean build artifacts
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
 	$(GOCLEAN)
-	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server
+	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server trading-days
 	@rm -rf $(BINARY_DIR)
 	@rm -rf $(PACKAGE_DIR)
 	@rm -f jax-ov-*.tar.gz
@@ -167,12 +176,15 @@ package:
 	echo "$$NEW_VERSION" > .version.tmp && \
 	echo "Building package version: $$NEW_VERSION" && \
 	$(MAKE) linux-all && \
+	$(MAKE) trading-days && \
 	NEW_VERSION=$$(cat .version.tmp) && \
 	rm -rf $(PACKAGE_DIR) && \
 	mkdir -p $(TARBALL_DIR) && \
 	cp -r $(LINUX_BINARY_DIR)/* $(TARBALL_DIR)/ && \
 	echo "$$NEW_VERSION" > $(TARBALL_DIR)/VERSION && \
 	cp CHANGELOG.md $(TARBALL_DIR)/ && \
+	mkdir -p $(TARBALL_DIR)/calendar && \
+	./trading-days --output $(TARBALL_DIR)/calendar/trading-days.json && \
 	cd $(PACKAGE_DIR) && tar -czf ../jax-ov-$$NEW_VERSION.tar.gz jax-ov && \
 	cd .. && rm -rf $(PACKAGE_DIR) && \
 	mv .version.tmp $(VERSION_FILE) && \

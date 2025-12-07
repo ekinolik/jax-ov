@@ -99,8 +99,9 @@ The project includes nine main commands:
 5. **extract** - Extract transactions for a specific time period (JSON format)
 6. **log-extract** - Extract transactions for a specific time period (JSONL format)
 7. **top-contracts** - Find contracts with largest premiums
-8. **logger** - WebSocket logger service (logs to daily files)
-9. **server** - Analysis WebSocket server (serves analyzed data to clients)
+8. **trading-days** - Generate trading days calendar and get past N trading days
+9. **logger** - WebSocket logger service (logs to daily files)
+10. **server** - Analysis WebSocket server (serves analyzed data to clients)
 
 ### Monitor Command (Real-time WebSocket)
 
@@ -356,6 +357,58 @@ This saves the top 10 contracts to a JSON file.
 - `--output` or `-o`: Optional output JSON file path
 
 **Note**: This command works with both JSON (from `reconstruct`) and JSONL (from `logger`) formats. It automatically detects the format. The premium is calculated as the aggregate of all transactions per contract (sum of volume × VWAP × 100 for each contract).
+
+### Trading-Days Command (Trading Calendar)
+
+#### Build the trading-days command
+
+```bash
+go build -o trading-days ./cmd/trading-days
+```
+
+#### Fetch trading days for current and next year
+
+```bash
+./trading-days --output trading-days.json
+```
+
+This will:
+1. Fetch all trading days for the current year and next year using the NYSE calendar
+2. Save the results to a JSON file (default: `trading-days.json`)
+3. The output includes trading days organized by year and a combined list
+
+#### Get past N trading days from a JSON file
+
+```bash
+./trading-days --load trading-days.json --past 5
+```
+
+This will:
+1. Load the trading days JSON file
+2. Find the most recent trading day (today or the last trading day before today)
+3. Return the past N trading days (including today if it's a trading day)
+4. Output the results as a JSON array to stdout
+
+#### Trading-Days Command-line Flags
+
+- `--output` or `-o`: Output JSON file path (default: "trading-days.json")
+- `--load`: Load JSON file and get past N trading days
+- `--past` or `-p`: Number of past trading days to retrieve (required if --load is used)
+
+**Examples**:
+
+```bash
+# Generate trading days for 2025 and 2026
+./trading-days --output trading-days.json
+
+# Get the past 10 trading days
+./trading-days --load trading-days.json --past 10
+
+# Get the past 20 trading days
+./trading-days --load trading-days.json --past 20
+```
+
+**Note**: This command uses the `github.com/scmhub/calendar` library to determine US market trading days (NYSE calendar). It excludes weekends and market holidays.
 
 ### Output Format
 
@@ -744,6 +797,10 @@ go run ./cmd/log-extract --input logs/2025-11-28.jsonl --time 9:46 --period 5
 
 # Run top-contracts command
 go run ./cmd/top-contracts --input logs/2025-11-28.jsonl --top 10
+
+# Run trading-days command
+go run ./cmd/trading-days --output trading-days.json
+go run ./cmd/trading-days --load trading-days.json --past 10
 
 # Run logger service
 go run ./cmd/logger --ticker AAPL --mode all --log-dir ./logs

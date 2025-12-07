@@ -1,6 +1,8 @@
 module github.com/ekinolik/jax-ov
 
-go 1.21.5
+go 1.23.0
+
+toolchain go1.24.11
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -14,6 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/massive-com/client-go/v2 v2.0.0 // indirect
+	github.com/scmhub/calendar v0.0.0-20250305134741-bdfe49f3f914 // indirect
 	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd // indirect
 	golang.org/x/net v0.25.0 // indirect
