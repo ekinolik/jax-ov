@@ -2,16 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00007] - 2025-12-06
+
+### Fixed
+- Trading-days command now correctly excludes holidays (e.g., Christmas, New Year's Day, Independence Day)
+- Changed from using `IsBusinessDay` to `IsOpen` at market hours to properly identify trading days
+
 ## [1.0.00006] - 2025-12-06
 
 ### Changed
 - Package target now automatically generates trading days calendar during packaging
 - Calendar is stored in `calendar/trading-days.json` within the tarball
-
-### Added
-- New `trading-days` CLI tool to generate trading days calendar for current and next year
-- Support for retrieving past N trading days from generated calendar JSON file
-- Uses scmhub/calendar library for NYSE trading day calculations
 
 ### Added
 - New `trading-days` CLI tool to generate trading days calendar for current and next year

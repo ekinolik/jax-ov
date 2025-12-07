@@ -100,16 +100,21 @@ func fetchTradingDays(outputFile string) {
 func getTradingDaysForYear(cal *calendar.Calendar, year int) []string {
 	var tradingDays []string
 
+	// Load New York timezone for market hours
+	nyTZ, _ := time.LoadLocation("America/New_York")
+
 	// Start from January 1st of the year
-	startDate := time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC)
+	startDate := time.Date(year, time.January, 1, 0, 0, 0, 0, nyTZ)
 	// End at December 31st of the year
-	endDate := time.Date(year, time.December, 31, 23, 59, 59, 999, time.UTC)
+	endDate := time.Date(year, time.December, 31, 23, 59, 59, 999, nyTZ)
 
 	// Iterate through each day in the year
 	currentDate := startDate
 	for currentDate.Before(endDate) || currentDate.Equal(endDate) {
-		// Check if it's a business day (trading day = business day that's not a holiday)
-		if cal.IsBusinessDay(currentDate) {
+		// Check if the market is open at 10:00 AM ET (during market hours)
+		// This correctly excludes holidays, weekends, and early closes
+		checkTime := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 10, 0, 0, 0, nyTZ)
+		if cal.IsOpen(checkTime) {
 			tradingDays = append(tradingDays, currentDate.Format("2006-01-02"))
 		}
 		currentDate = currentDate.AddDate(0, 0, 1)

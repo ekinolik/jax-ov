@@ -27,3 +27,14 @@ Example format:
 
 Keep changelog entries concise and focused on what changed, not implementation details.
 
+## Build Output Directory
+
+When testing builds with `go build`, always use the `builds/` directory as the output directory instead of the root directory. This keeps the root directory clean and avoids needing to add new binaries to `.gitignore`.
+
+Example:
+```bash
+go build -o builds/test-command ./cmd/test-command
+```
+
+Never build binaries directly to the root directory during development or testing.
+
