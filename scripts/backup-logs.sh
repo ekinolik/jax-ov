@@ -1,0 +1,388 @@
+#!/bin/bash
+
+# Log Backup Script
+# Backs up old log files to S3, keeping only the past N trading days on disk
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Default values
+LOG_DIR="${LOG_DIR:-./logs}"
+NO_DELETE=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Parse command-line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --no-delete)
+                NO_DELETE=true
+                shift
+                ;;
+            --log-dir)
+                LOG_DIR="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --no-delete    Copy files to S3 instead of moving (keeps files on disk)"
+                echo "  --log-dir DIR  Log directory path (default: ./logs)"
+                echo "  -h, --help     Show this help message"
+                exit 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Error logging function
+error() {
+    echo -e "${RED}ERROR:${NC} $1" >&2
+}
+
+warning() {
+    echo -e "${YELLOW}WARNING:${NC} $1" >&2
+}
+
+info() {
+    echo -e "${GREEN}INFO:${NC} $1"
+}
+
+# Load environment variables from .env file
+load_env() {
+    local env_file="${PROJECT_ROOT}/.env"
+    
+    if [[ ! -f "$env_file" ]]; then
+        error ".env file not found at $env_file"
+        exit 1
+    fi
+    
+    # Source .env file, ignoring comments and empty lines
+    # Temporarily disable unset variable check while loading
+    set +u
+    set -a
+    # Use a safer method to source the file
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+        # Export the variable
+        export "$line"
+    done < "$env_file"
+    set +a
+    set -u
+}
+
+# Validate environment variables
+validate_env() {
+    if [[ -z "${LOG_RETENTION_DAYS:-}" ]]; then
+        error "LOG_RETENTION_DAYS not set in .env file"
+        exit 1
+    fi
+    
+    if ! [[ "$LOG_RETENTION_DAYS" =~ ^[0-9]+$ ]] || [[ "$LOG_RETENTION_DAYS" -le 0 ]]; then
+        error "LOG_RETENTION_DAYS must be a positive integer, got: $LOG_RETENTION_DAYS"
+        exit 1
+    fi
+    
+    if [[ -z "${AWS_S3_PATH:-}" ]]; then
+        error "AWS_S3_PATH not set in .env file"
+        exit 1
+    fi
+    
+    # Validate AWS_S3_PATH format: bucket/prefix
+    if [[ ! "$AWS_S3_PATH" =~ ^[^/]+/.+$ ]]; then
+        error "AWS_S3_PATH must be in format 'bucket/prefix', got: $AWS_S3_PATH"
+        exit 1
+    fi
+}
+
+# Find trading-days binary
+find_trading_days_binary() {
+    # First, try to find it in the same directory as this script
+    local local_binary="${SCRIPT_DIR}/../trading-days"
+    if [[ -f "$local_binary" ]] && [[ -x "$local_binary" ]]; then
+        echo "$local_binary"
+        return 0
+    fi
+    
+    # Try in project root
+    local root_binary="${PROJECT_ROOT}/trading-days"
+    if [[ -f "$root_binary" ]] && [[ -x "$root_binary" ]]; then
+        echo "$root_binary"
+        return 0
+    fi
+    
+    # Try in PATH
+    if command -v trading-days &> /dev/null; then
+        echo "trading-days"
+        return 0
+    fi
+    
+    error "trading-days binary not found. Please ensure it's in PATH or in the project directory."
+    exit 1
+}
+
+# Find calendar/trading-days.json file
+find_trading_days_file() {
+    # Find calendar file relative to this script's location
+    local script_dir
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    
+    # Look for calendar/trading-days.json in the same directory as this script
+    local calendar_file="${script_dir}/calendar/trading-days.json"
+    if [[ -f "$calendar_file" ]]; then
+        echo "$calendar_file"
+        return 0
+    fi
+    
+    # If script is in scripts/ subdirectory, look in parent directory
+    if [[ "$script_dir" == */scripts ]]; then
+        calendar_file="${script_dir%/scripts}/calendar/trading-days.json"
+        if [[ -f "$calendar_file" ]]; then
+            echo "$calendar_file"
+            return 0
+        fi
+    fi
+    
+    error "calendar/trading-days.json not found. Expected at: ${script_dir}/calendar/trading-days.json"
+    exit 1
+}
+
+# Get trading days to keep
+get_trading_days_to_keep() {
+    local trading_days_binary="$1"
+    local trading_days_file="$2"
+    local retention_days="$3"
+    
+    # Run trading-days command to get past N trading days
+    local output
+    if ! output=$("$trading_days_binary" --load "$trading_days_file" --past "$retention_days" 2>&1); then
+        error "Failed to get trading days: $output"
+        exit 1
+    fi
+    
+    # Parse JSON array output
+    local dates
+    if ! dates=$(echo "$output" | jq -r '.[]' 2>/dev/null); then
+        error "Invalid trading days output (not valid JSON array): $output"
+        exit 1
+    fi
+    
+    # Count dates and validate
+    local date_count
+    date_count=$(echo "$dates" | wc -l | tr -d ' ')
+    
+    if [[ "$date_count" -ne "$retention_days" ]]; then
+        error "Invalid trading days output (expected $retention_days dates, got $date_count)"
+        exit 1
+    fi
+    
+    # Validate each date is in YYYY-MM-DD format and is a valid date
+    while IFS= read -r date; do
+        if [[ ! "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            error "Invalid date format in trading days output: $date (expected YYYY-MM-DD)"
+            exit 1
+        fi
+        
+        # Validate it's a valid date using date command
+        # Try GNU date format first (Linux), then BSD date format (macOS)
+        local date_valid=false
+        if date -d "$date" &>/dev/null 2>&1; then
+            # GNU date (Linux)
+            date_valid=true
+        elif date -j -f "%Y-%m-%d" "$date" "+%Y-%m-%d" &>/dev/null 2>&1; then
+            # BSD date (macOS)
+            date_valid=true
+        fi
+        
+        if [[ "$date_valid" == "false" ]]; then
+            error "Invalid date in trading days output: $date (not a valid calendar date)"
+            exit 1
+        fi
+    done <<< "$dates"
+    
+    # Return dates as space-separated string for easy checking
+    echo "$dates" | tr '\n' ' '
+}
+
+# Extract date from log filename
+extract_date_from_filename() {
+    local filename="$1"
+    # Pattern: SYMBOL_YYYY-MM-DD.jsonl
+    # Extract the YYYY-MM-DD part (last underscore before .jsonl)
+    if [[ "$filename" =~ _([0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo ""
+    fi
+}
+
+# Check if date is in keep list
+is_date_in_keep_list() {
+    local date="$1"
+    local keep_list="$2"
+    
+    # Check if date exists in the keep list
+    [[ " $keep_list " =~ " $date " ]]
+}
+
+# Create full backup tarball of logs directory
+create_full_backup() {
+    local backup_timestamp
+    backup_timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_filename="logs-full-backup-${backup_timestamp}.tar.gz"
+    local backup_path="${LOG_DIR}/${backup_filename}"
+    local s3_backup_path="s3://${AWS_S3_PATH}/backups/${backup_filename}"
+    
+    info "Creating full backup tarball of logs directory..."
+    
+    # Create tarball of entire logs directory
+    if ! tar -czf "$backup_path" -C "$(dirname "$LOG_DIR")" "$(basename "$LOG_DIR")" 2>/dev/null; then
+        error "Failed to create full backup tarball"
+        exit 1
+    fi
+    
+    info "Full backup created: $backup_filename ($(du -h "$backup_path" | cut -f1))"
+    
+    # Upload to S3
+    info "Uploading full backup to S3: $s3_backup_path"
+    if aws s3 mv "$backup_path" "$s3_backup_path" 2>&1; then
+        info "Successfully uploaded full backup to S3"
+    else
+        error "Failed to upload full backup to S3 - keeping tarball on disk"
+        warning "Full backup tarball kept at: $backup_path"
+        exit 1
+    fi
+}
+
+# Main backup function
+main() {
+    # Parse command-line arguments
+    parse_args "$@"
+    
+    info "Starting log backup process..."
+    
+    # Load and validate environment
+    load_env
+    validate_env
+    
+    info "LOG_RETENTION_DAYS: $LOG_RETENTION_DAYS"
+    info "AWS_S3_PATH: $AWS_S3_PATH"
+    
+    # Find trading-days binary and calendar file
+    local trading_days_binary
+    trading_days_binary=$(find_trading_days_binary)
+    info "Found trading-days binary: $trading_days_binary"
+    
+    local trading_days_file
+    trading_days_file=$(find_trading_days_file)
+    info "Found trading days file: $trading_days_file"
+    
+    # Get trading days to keep
+    local keep_dates
+    keep_dates=$(get_trading_days_to_keep "$trading_days_binary" "$trading_days_file" "$LOG_RETENTION_DAYS")
+    info "Trading days to keep: $keep_dates"
+    
+    # Check if log directory exists
+    if [[ ! -d "$LOG_DIR" ]]; then
+        error "Log directory not found: $LOG_DIR"
+        exit 1
+    fi
+    
+    # Create full backup tarball first (disaster recovery backup)
+    create_full_backup
+    
+    # Scan log directory for files
+    local files_to_backup=()
+    local files_to_keep=()
+    
+    info "Scanning log directory: $LOG_DIR"
+    # Use find to handle cases where no files match (pattern: SYMBOL_YYYY-MM-DD.jsonl)
+    while IFS= read -r -d '' file; do
+        local filename=$(basename "$file")
+        local date
+        date=$(extract_date_from_filename "$filename")
+        
+        if [[ -z "$date" ]]; then
+            warning "Skipping file with invalid date format: $filename"
+            continue
+        fi
+        
+        if is_date_in_keep_list "$date" "$keep_dates"; then
+            files_to_keep+=("$file")
+        else
+            files_to_backup+=("$file")
+        fi
+    done < <(find "$LOG_DIR" -maxdepth 1 -name "*_*.jsonl" -type f -print0 2>/dev/null || true)
+    
+    # Safety check: Ensure at least one file will be kept
+    if [[ ${#files_to_keep[@]} -eq 0 ]]; then
+        error "No files would be kept on disk - aborting backup to prevent data loss"
+        exit 1
+    fi
+    
+    info "Files to keep on disk: ${#files_to_keep[@]}"
+    info "Files to backup to S3: ${#files_to_backup[@]}"
+    
+    if [[ ${#files_to_backup[@]} -eq 0 ]]; then
+        info "No files to backup. All files are within retention period."
+        exit 0
+    fi
+    
+    # Backup files to S3
+    local backup_count=0
+    local failed_count=0
+    local s3_cmd="mv"
+    
+    if [[ "$NO_DELETE" == "true" ]]; then
+        s3_cmd="cp"
+        info "Using COPY mode (--no-delete): files will be kept on disk"
+    else
+        info "Using MOVE mode: files will be removed from disk after backup"
+    fi
+    
+    for file in "${files_to_backup[@]}"; do
+        local filename=$(basename "$file")
+        local s3_path="s3://${AWS_S3_PATH}/logs/$filename"
+        
+        info "Backing up $filename to $s3_path"
+        
+        if aws s3 "$s3_cmd" "$file" "$s3_path" 2>&1; then
+            ((backup_count++))
+            if [[ "$NO_DELETE" == "true" ]]; then
+                info "Successfully copied: $filename (kept on disk)"
+            else
+                info "Successfully backed up: $filename (removed from disk)"
+            fi
+        else
+            ((failed_count++))
+            warning "Failed to upload $filename to S3 - keeping on disk"
+        fi
+    done
+    
+    info "Backup complete. Successfully backed up: $backup_count, Failed: $failed_count"
+    
+    if [[ $failed_count -gt 0 ]]; then
+        warning "Some files failed to backup and were kept on disk"
+        exit 1
+    fi
+    
+    exit 0
+}
+
+# Run main function
+main "$@"
+

@@ -26,6 +26,7 @@ go.work.sum
 
 # env file
 .env
+# Note: .env.example should NOT be ignored - it's tracked in git
 
 # Log files
 logs/

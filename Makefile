@@ -183,8 +183,11 @@ package:
 	cp -r $(LINUX_BINARY_DIR)/* $(TARBALL_DIR)/ && \
 	echo "$$NEW_VERSION" > $(TARBALL_DIR)/VERSION && \
 	cp CHANGELOG.md $(TARBALL_DIR)/ && \
+	cp .env.example $(TARBALL_DIR)/ && \
 	mkdir -p $(TARBALL_DIR)/calendar && \
 	./trading-days --output $(TARBALL_DIR)/calendar/trading-days.json && \
+	cp scripts/backup-logs.sh $(TARBALL_DIR)/ && \
+	chmod +x $(TARBALL_DIR)/backup-logs.sh && \
 	cd $(PACKAGE_DIR) && tar -czf ../jax-ov-$$NEW_VERSION.tar.gz jax-ov && \
 	cd .. && rm -rf $(PACKAGE_DIR) && \
 	mv .version.tmp $(VERSION_FILE) && \

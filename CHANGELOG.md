@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00008] - 2025-12-07
+
+### Added
+- New `scripts/backup-logs.sh` script to backup old log files to S3
+- Script keeps only past N trading days on disk (configurable via LOG_RETENTION_DAYS)
+- Automatic S3 backup with safety checks to prevent data loss
+- Environment variables: LOG_RETENTION_DAYS and AWS_S3_PATH
+- Full backup tarball of entire logs directory before individual file backups (disaster recovery)
+- `--no-delete` option to copy files to S3 instead of moving (keeps files on disk)
+- Enhanced date validation using GNU date command to ensure valid calendar dates
+- Backup script included in packaged tarball (in scripts/ directory)
+
 ## [1.0.00007] - 2025-12-06
 
 ### Fixed
