@@ -50,6 +50,7 @@ builds/
 /server
 /top-contracts
 /trading-days
+/jax-ov
 
 # build directory
 /bin

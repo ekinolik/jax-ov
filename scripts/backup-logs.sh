@@ -14,8 +14,8 @@ NC='\033[0m' # No Color
 # Default values
 LOG_DIR="${LOG_DIR:-./logs}"
 NO_DELETE=false
+# Script directory is the project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Parse command-line arguments
 parse_args() {
@@ -62,7 +62,7 @@ info() {
 
 # Load environment variables from .env file
 load_env() {
-    local env_file="${PROJECT_ROOT}/.env"
+    local env_file="${SCRIPT_DIR}/.env"
     
     if [[ ! -f "$env_file" ]]; then
         error ".env file not found at $env_file"
@@ -118,8 +118,8 @@ find_trading_days_binary() {
         return 0
     fi
     
-    # Try in project root
-    local root_binary="${PROJECT_ROOT}/trading-days"
+    # Try in script directory (project root)
+    local root_binary="${SCRIPT_DIR}/trading-days"
     if [[ -f "$root_binary" ]] && [[ -x "$root_binary" ]]; then
         echo "$root_binary"
         return 0
@@ -244,14 +244,18 @@ create_full_backup() {
     local backup_timestamp
     backup_timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_filename="logs-full-backup-${backup_timestamp}.tar.gz"
-    local backup_path="${LOG_DIR}/${backup_filename}"
+    local backup_path="/tmp/${backup_filename}"
     local s3_backup_path="s3://${AWS_S3_PATH}/backups/${backup_filename}"
     
     info "Creating full backup tarball of logs directory..."
     
-    # Create tarball of entire logs directory
+    # Create tarball of entire logs directory in /tmp to avoid including it in the backup
     if ! tar -czf "$backup_path" -C "$(dirname "$LOG_DIR")" "$(basename "$LOG_DIR")" 2>/dev/null; then
         error "Failed to create full backup tarball"
+        # Clean up any partial file that may have been created
+        if [[ -f "$backup_path" ]]; then
+            rm -f "$backup_path"
+        fi
         exit 1
     fi
     
@@ -259,11 +263,24 @@ create_full_backup() {
     
     # Upload to S3
     info "Uploading full backup to S3: $s3_backup_path"
+    local upload_success=false
     if aws s3 mv "$backup_path" "$s3_backup_path" 2>&1; then
         info "Successfully uploaded full backup to S3"
+        upload_success=true
     else
-        error "Failed to upload full backup to S3 - keeping tarball on disk"
-        warning "Full backup tarball kept at: $backup_path"
+        error "Failed to upload full backup to S3"
+    fi
+    
+    # Always delete the tarball from /tmp, even if upload failed
+    if [[ -f "$backup_path" ]]; then
+        rm -f "$backup_path"
+        if [[ "$upload_success" == "false" ]]; then
+            warning "Full backup tarball removed from /tmp (upload failed)"
+        fi
+    fi
+    
+    # Exit if upload failed
+    if [[ "$upload_success" == "false" ]]; then
         exit 1
     fi
 }
@@ -360,17 +377,20 @@ main() {
         
         info "Backing up $filename to $s3_path"
         
+        # Temporarily disable exit on error for this command
+        set +e
         if aws s3 "$s3_cmd" "$file" "$s3_path" 2>&1; then
-            ((backup_count++))
+            backup_count=$((backup_count + 1))
             if [[ "$NO_DELETE" == "true" ]]; then
                 info "Successfully copied: $filename (kept on disk)"
             else
                 info "Successfully backed up: $filename (removed from disk)"
             fi
         else
-            ((failed_count++))
+            failed_count=$((failed_count + 1))
             warning "Failed to upload $filename to S3 - keeping on disk"
         fi
+        set -e
     done
     
     info "Backup complete. Successfully backed up: $backup_count, Failed: $failed_count"
