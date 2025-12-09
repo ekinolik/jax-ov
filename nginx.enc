@@ -11,6 +11,10 @@ upstream ov_api_backend {
     server 127.0.0.1:4000;
 }
 
+upstream ov_apple_auth {
+    server 127.0.0.1:4000;
+}
+
 # Redirect all HTTP to HTTPS
 server {
     listen 80;
@@ -84,6 +88,16 @@ server {
     # --- HTTP API: /transactions ---
     location /transactions {
         proxy_pass http://ov_api_backend;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # --- HTTP Apple Auth Login: /auth/login ---
+    location /auth/login {
+        proxy_pass http://ov_apple_auth;
 
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
