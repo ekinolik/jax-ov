@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
 	"github.com/ekinolik/jax-ov/internal/auth"
 	"github.com/ekinolik/jax-ov/internal/config"
 	"github.com/ekinolik/jax-ov/internal/server"
+	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 )
 
@@ -244,118 +248,240 @@ func main() {
 		}
 	})
 
-	// Start analysis loop - analyze per ticker and send updates to subscribed clients
-	go func() {
-		updateTicker := time.NewTicker(5 * time.Second)
-		defer updateTicker.Stop()
+	// TickerState tracks the state for each ticker being monitored
+	type TickerState struct {
+		LastFilePosition int64                       // Position of last complete line read
+		CurrentPeriod    *analysis.TimePeriodSummary // Current in-progress period
+		LastPeriodEnd    int64                       // Last completed period end timestamp
+		WatchedFile      string                      // Path to the log file being watched
+		mu               sync.Mutex                  // Mutex for thread-safe access
+	}
 
-		// Track last processed period end timestamp per ticker (for completed periods)
-		lastPeriodEnds := make(map[string]int64)
-		// Track last current period data per ticker (for in-progress periods)
-		// Map: ticker -> {periodEnd, totalPremium, callVolume, putVolume}
-		lastCurrentPeriodData := make(map[string]struct {
-			periodEnd    int64
-			totalPremium float64
-			callVolume   int64
-			putVolume    int64
-		})
+	// State management
+	tickerStates := make(map[string]*TickerState)
+	statesMu := sync.RWMutex{}
 
-		// Analyze and broadcast every 5 seconds
-		for range updateTicker.C {
-			// Get current date in Pacific timezone
-			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
-			dateStr := time.Now().In(pacificTZ).Format("2006-01-02")
+	// Helper to get or create ticker state
+	getTickerState := func(ticker string, dateStr string) *TickerState {
+		statesMu.Lock()
+		defer statesMu.Unlock()
 
-			// Get all unique tickers from connected clients
-			tickers := wsServer.GetSubscribedTickers()
+		state, exists := tickerStates[ticker]
+		if !exists {
+			// Initialize state
+			logFile := server.GetLogFileForTickerAndDate(*logDir, ticker, dateStr)
+			state = &TickerState{
+				LastFilePosition: 0,
+				CurrentPeriod:    nil,
+				LastPeriodEnd:    0,
+				WatchedFile:      logFile,
+			}
+			tickerStates[ticker] = state
+			log.Printf("Started monitoring log file for ticker %s: %s", ticker, logFile)
 
-			// Analyze and send updates for each ticker
-			for ticker := range tickers {
+			// Do initial load to establish baseline
+			go func() {
 				summaries, err := server.AnalyzeTickerAndDate(*logDir, ticker, dateStr, *period)
 				if err != nil {
-					log.Printf("Error analyzing ticker %s: %v", ticker, err)
-					continue
+					log.Printf("Error in initial load for ticker %s: %v", ticker, err)
+					return
 				}
 
-				if len(summaries) == 0 {
-					continue
+				state.mu.Lock()
+				defer state.mu.Unlock()
+
+				// Get file size to set last position
+				if fileInfo, err := os.Stat(logFile); err == nil {
+					state.LastFilePosition = fileInfo.Size()
 				}
 
-				// Find the latest complete period
-				now := time.Now()
-				periodDuration := time.Duration(*period) * time.Minute
-
-				var latestCompleteSummary *analysis.TimePeriodSummary
-				for i := len(summaries) - 1; i >= 0; i-- {
-					if now.Sub(summaries[i].PeriodEnd) >= periodDuration {
-						latestCompleteSummary = &summaries[i]
-						break
-					}
-				}
-
-				// Send update if we have a new complete period for this ticker
-				if latestCompleteSummary != nil {
-					periodEnd := latestCompleteSummary.PeriodEnd.UnixMilli()
-					lastPeriodEnd, exists := lastPeriodEnds[ticker]
-					if !exists || periodEnd > lastPeriodEnd {
-						wsServer.SendUpdateForTicker(ticker, *latestCompleteSummary)
-						lastPeriodEnds[ticker] = periodEnd
-						log.Printf("Sent completed period update for ticker %s, period ending at %s", ticker, latestCompleteSummary.PeriodEnd.Format("15:04:05"))
-					}
-				}
-
-				// Find the latest period (could be current in-progress period)
+				// Set up current period
 				if len(summaries) > 0 {
-					latestSummary := &summaries[len(summaries)-1]
-					periodEnd := latestSummary.PeriodEnd.UnixMilli()
+					now := time.Now()
+					periodDuration := time.Duration(*period) * time.Minute
+					latestSummary := summaries[len(summaries)-1]
 
-					// Check if this is the current in-progress period (not yet complete)
-					isCurrentPeriod := now.Sub(latestSummary.PeriodEnd) < periodDuration
-
-					// Clear current period data if the period is no longer current
-					if !isCurrentPeriod {
-						delete(lastCurrentPeriodData, ticker)
+					if now.Sub(latestSummary.PeriodEnd) < periodDuration {
+						// It's the current period
+						state.CurrentPeriod = &latestSummary
 					}
 
-					// Only send current period updates if:
-					// 1. It's the current period (not complete yet)
-					// 2. It has data (non-zero premiums or volumes)
-					// 3. The data has changed since last update (different period end OR different data values)
-					if isCurrentPeriod && (latestSummary.TotalPremium > 0 || latestSummary.CallVolume > 0 || latestSummary.PutVolume > 0) {
-						lastData, exists := lastCurrentPeriodData[ticker]
-						shouldSend := false
-
-						if !exists {
-							// First time seeing this period, send update
-							shouldSend = true
-						} else if periodEnd != lastData.periodEnd {
-							// Period changed (new period started), send update
-							shouldSend = true
-						} else if latestSummary.TotalPremium != lastData.totalPremium ||
-							latestSummary.CallVolume != lastData.callVolume ||
-							latestSummary.PutVolume != lastData.putVolume {
-							// Same period but data changed, send update
-							shouldSend = true
+					// Find last completed period
+					for i := len(summaries) - 1; i >= 0; i-- {
+						if now.Sub(summaries[i].PeriodEnd) >= periodDuration {
+							state.LastPeriodEnd = summaries[i].PeriodEnd.UnixMilli()
+							break
 						}
+					}
+				}
+			}()
+		}
+		return state
+	}
 
-						if shouldSend {
-							wsServer.SendUpdateForTicker(ticker, *latestSummary)
-							lastCurrentPeriodData[ticker] = struct {
-								periodEnd    int64
-								totalPremium float64
-								callVolume   int64
-								putVolume    int64
-							}{
-								periodEnd:    periodEnd,
-								totalPremium: latestSummary.TotalPremium,
-								callVolume:   latestSummary.CallVolume,
-								putVolume:    latestSummary.PutVolume,
+	// Create file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatalf("Failed to create file watcher: %v", err)
+	}
+	defer watcher.Close()
+
+	// Watch the log directory
+	if err := watcher.Add(*logDir); err != nil {
+		log.Fatalf("Failed to watch log directory: %v", err)
+	}
+
+	// Process file events
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+
+				// Only process write events
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					// Extract ticker from filename: SYMBOL_YYYY-MM-DD.jsonl
+					filename := filepath.Base(event.Name)
+					if !strings.HasSuffix(filename, ".jsonl") {
+						continue
+					}
+
+					// Parse ticker from filename
+					parts := strings.Split(filename, "_")
+					if len(parts) < 2 {
+						continue
+					}
+					ticker := strings.ToUpper(parts[0])
+
+					// Check if this ticker is subscribed
+					subscribedTickers := wsServer.GetSubscribedTickers()
+					if !subscribedTickers[ticker] {
+						continue
+					}
+
+					// Get current date
+					pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+					dateStr := time.Now().In(pacificTZ).Format("2006-01-02")
+
+					// Get or create state for this ticker
+					state := getTickerState(ticker, dateStr)
+
+					// Process new data
+					state.mu.Lock()
+					aggregates, newPosition, err := server.ReadLogFileIncremental(event.Name, state.LastFilePosition)
+					if err != nil {
+						log.Printf("Error reading incremental data for ticker %s: %v", ticker, err)
+						state.mu.Unlock()
+						continue
+					}
+
+					if len(aggregates) == 0 {
+						// No new complete lines
+						state.mu.Unlock()
+						continue
+					}
+
+					// Update file position
+					state.LastFilePosition = newPosition
+
+					// Process aggregates
+					now := time.Now()
+					periodDuration := time.Duration(*period) * time.Minute
+
+					for _, agg := range aggregates {
+						// Determine which period this aggregate belongs to
+						periodStart := analysis.RoundDownToPeriod(agg.StartTimestamp, *period)
+						periodEnd := periodStart + int64(*period*60*1000)
+
+						// Check if this is the current period
+						periodEndTime := time.Unix(0, periodEnd*int64(time.Millisecond))
+						isCurrentPeriod := now.Sub(periodEndTime) < periodDuration
+
+						if isCurrentPeriod {
+							// Update or create current period
+							if state.CurrentPeriod == nil {
+								// Create new current period
+								state.CurrentPeriod = &analysis.TimePeriodSummary{
+									PeriodStart: time.Unix(0, periodStart*int64(time.Millisecond)),
+									PeriodEnd:   periodEndTime,
+								}
 							}
-							log.Printf("Sent current period update for ticker %s, period ending at %s", ticker, latestSummary.PeriodEnd.Format("15:04:05"))
+
+							// Check if aggregate belongs to current period
+							if state.CurrentPeriod.PeriodStart.UnixMilli() == periodStart {
+								// Update current period incrementally
+								server.UpdatePeriodSummaryIncremental(state.CurrentPeriod, []analysis.Aggregate{agg}, *period)
+
+								// Send update
+								wsServer.SendUpdateForTicker(ticker, *state.CurrentPeriod)
+							} else {
+								// New period started - check if old one is complete
+								oldPeriodEnd := state.CurrentPeriod.PeriodEnd.UnixMilli()
+								if now.Sub(state.CurrentPeriod.PeriodEnd) >= periodDuration {
+									// Old period is complete, send it
+									if oldPeriodEnd > state.LastPeriodEnd {
+										wsServer.SendUpdateForTicker(ticker, *state.CurrentPeriod)
+										state.LastPeriodEnd = oldPeriodEnd
+									}
+								}
+
+								// Start new current period
+								state.CurrentPeriod = &analysis.TimePeriodSummary{
+									PeriodStart: time.Unix(0, periodStart*int64(time.Millisecond)),
+									PeriodEnd:   periodEndTime,
+								}
+								server.UpdatePeriodSummaryIncremental(state.CurrentPeriod, []analysis.Aggregate{agg}, *period)
+								wsServer.SendUpdateForTicker(ticker, *state.CurrentPeriod)
+							}
+						} else {
+							// This is a completed period - check if we need to send it
+							if periodEnd > state.LastPeriodEnd {
+								// Need to aggregate this period (might have multiple aggregates)
+								// For now, we'll need to re-read or cache - simplified: just send if it's new
+								// In a full implementation, we'd track completed periods better
+								summaries, _ := server.AnalyzeTickerAndDate(*logDir, ticker, dateStr, *period)
+								for i := len(summaries) - 1; i >= 0; i-- {
+									if summaries[i].PeriodEnd.UnixMilli() == periodEnd {
+										wsServer.SendUpdateForTicker(ticker, summaries[i])
+										state.LastPeriodEnd = periodEnd
+										break
+									}
+								}
+							}
 						}
 					}
+
+					state.mu.Unlock()
+				}
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Printf("File watcher error: %v", err)
+			}
+		}
+	}()
+
+	// Cleanup: remove ticker states when clients disconnect
+	go func() {
+		cleanupTicker := time.NewTicker(30 * time.Second)
+		defer cleanupTicker.Stop()
+
+		for range cleanupTicker.C {
+			subscribedTickers := wsServer.GetSubscribedTickers()
+			statesMu.Lock()
+			for ticker := range tickerStates {
+				if !subscribedTickers[ticker] {
+					state := tickerStates[ticker]
+					logFile := state.WatchedFile
+					delete(tickerStates, ticker)
+					log.Printf("Stopped monitoring log file for ticker %s: %s", ticker, logFile)
 				}
 			}
+			statesMu.Unlock()
 		}
 	}()
 

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00016] - 2025-12-09
+
+### Changed
+- Replaced polling-based updates with real-time file system watching using fsnotify
+- Server now responds immediately to log file writes instead of polling every 5 seconds
+- Implemented incremental log file reading that only processes new complete JSONL lines
+- Handles partial lines correctly by tracking file position at end of complete lines only
+- Only monitors log files for tickers with active WebSocket connections
+- Minimal memory and disk I/O usage by tracking file positions and updating period summaries incrementally
+
 ## [1.0.00015] - 2025-12-09
 
 ### Changed

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,4 +253,123 @@ func GetTransactionsForTickerAndTimePeriod(logDir string, ticker string, dateStr
 	}
 
 	return filtered, nil
+}
+
+// ReadLogFileIncremental reads new complete lines from a log file starting at lastPosition
+// Returns new aggregates and the position of the last complete line read
+// If the last line is incomplete (no newline), it's not included and position is set before that line
+func ReadLogFileIncremental(filename string, lastPosition int64) ([]analysis.Aggregate, int64, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, lastPosition, fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer file.Close()
+
+	// Seek to last position
+	if _, err := file.Seek(lastPosition, 0); err != nil {
+		return nil, lastPosition, fmt.Errorf("failed to seek to position: %w", err)
+	}
+
+	var aggregates []analysis.Aggregate
+	reader := bufio.NewReader(file)
+	lastCompletePosition := lastPosition
+
+	// Read lines until EOF
+	for {
+		// Read until newline
+		line, err := reader.ReadBytes('\n')
+		
+		if err != nil {
+			// If we hit EOF, check if we have a partial line
+			if err == io.EOF {
+				// Check if we read anything (partial line)
+				if len(line) > 0 {
+					// Partial line - don't process it, return position before it
+					return aggregates, lastCompletePosition, nil
+				}
+				// No partial line, all complete
+				break
+			}
+			// Other error
+			return aggregates, lastCompletePosition, fmt.Errorf("error reading log file: %w", err)
+		}
+
+		// Remove newline character
+		line = line[:len(line)-1]
+		if len(line) == 0 {
+			// Empty line, update position and continue
+			lastCompletePosition += 1 // Just the newline
+			continue
+		}
+
+		// Parse JSON
+		var agg analysis.Aggregate
+		if err := json.Unmarshal(line, &agg); err != nil {
+			// Skip invalid lines but continue processing
+			// Still update position
+			lastCompletePosition += int64(len(line)) + 1 // line + newline
+			continue
+		}
+
+		aggregates = append(aggregates, agg)
+		// Update position: line length + newline
+		lastCompletePosition += int64(len(line)) + 1
+	}
+
+	// Get final file position
+	currentPos, err := file.Seek(0, 1) // Get current position
+	if err != nil {
+		return aggregates, lastCompletePosition, fmt.Errorf("failed to get current position: %w", err)
+	}
+
+	return aggregates, currentPos, nil
+}
+
+// UpdatePeriodSummaryIncremental updates a period summary with new aggregates incrementally
+func UpdatePeriodSummaryIncremental(summary *analysis.TimePeriodSummary, aggregates []analysis.Aggregate, periodMinutes int) error {
+	for _, agg := range aggregates {
+		// Determine option type
+		optionType, err := analysis.ParseOptionType(agg.Symbol)
+		if err != nil {
+			// Skip aggregates we can't parse
+			continue
+		}
+
+		// Calculate premium
+		premium := analysis.CalculatePremium(agg.Volume, agg.VWAP)
+
+		// Round down to time period to determine which period this belongs to
+		periodStart := analysis.RoundDownToPeriod(agg.StartTimestamp, periodMinutes)
+
+		// Check if this aggregate belongs to the summary's period
+		summaryPeriodStart := summary.PeriodStart.UnixMilli()
+		if periodStart != summaryPeriodStart {
+			// This aggregate belongs to a different period, skip it
+			// (This function only updates one period at a time)
+			continue
+		}
+
+		// Add premium and volume to appropriate type
+		if optionType == "call" {
+			summary.CallPremium += premium
+			summary.CallVolume += agg.Volume
+		} else if optionType == "put" {
+			summary.PutPremium += premium
+			summary.PutVolume += agg.Volume
+		}
+
+		// Update total
+		summary.TotalPremium = summary.CallPremium + summary.PutPremium
+
+		// Calculate call to put ratio
+		if summary.PutPremium > 0 {
+			summary.CallPutRatio = summary.CallPremium / summary.PutPremium
+		} else if summary.CallPremium > 0 {
+			summary.CallPutRatio = -1 // Infinite ratio
+		} else {
+			summary.CallPutRatio = 0
+		}
+	}
+
+	return nil
 }
