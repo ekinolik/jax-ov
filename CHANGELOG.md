@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00013] - 2025-12-07
+
+### Added
+- Apple Sign-In authentication for server endpoints
+- `/auth/login` POST endpoint that validates Apple identity tokens and returns JWT session tokens
+- JWT middleware to protect `/analyze` and `/transactions` endpoints
+- JWT session tokens with 7-day expiration (configurable via JWT_EXPIRY_HOURS)
+- Environment variables: APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_PRIVATE_KEY, JWT_SECRET, JWT_EXPIRY_HOURS
+- Apple identity token validation using Apple's public keys from JWKS endpoint
+- Session tokens include sub (Apple user ID), session_id, and expiration claims
+
 ## [1.0.00008] - 2025-12-07
 
 ### Added

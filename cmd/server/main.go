@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/ekinolik/jax-ov/internal/analysis"
+	"github.com/ekinolik/jax-ov/internal/auth"
+	"github.com/ekinolik/jax-ov/internal/config"
 	"github.com/ekinolik/jax-ov/internal/server"
 	"github.com/gorilla/websocket"
 )
@@ -29,12 +31,86 @@ func main() {
 	host := flag.String("host", "localhost", "Bind address (default: localhost)")
 	flag.Parse()
 
+	// Load authentication configuration
+	authConfig, err := config.LoadAuth()
+	if err != nil {
+		log.Fatalf("Failed to load auth configuration: %v", err)
+	}
+
 	// Create WebSocket server
 	wsServer := server.NewServer()
 	go wsServer.Run()
 
-	// HTTP handler for WebSocket connections
+	// Auth login endpoint (no JWT required)
+	http.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var loginRequest struct {
+			IdentityToken     string `json:"identity_token"`
+			AuthorizationCode string `json:"authorization_code"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&loginRequest); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if loginRequest.IdentityToken == "" {
+			http.Error(w, "identity_token is required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate Apple identity token
+		sub, err := auth.ValidateAppleIdentityToken(loginRequest.IdentityToken, authConfig.AppleClientID)
+		if err != nil {
+			log.Printf("Apple identity token validation failed: %v", err)
+			http.Error(w, "Invalid identity token", http.StatusUnauthorized)
+			return
+		}
+
+		// Create session JWT
+		sessionToken, err := auth.CreateSessionToken(sub, authConfig.JWTSecret, authConfig.JWTExpiryDuration())
+		if err != nil {
+			log.Printf("Failed to create session token: %v", err)
+			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+			return
+		}
+
+		// Return session token
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"token":      sessionToken,
+			"expires_in": int(authConfig.JWTExpiryDuration().Seconds()),
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Failed to encode response: %v", err)
+		}
+	})
+
+	// HTTP handler for WebSocket connections (protected by JWT)
 	http.HandleFunc("/analyze", func(w http.ResponseWriter, r *http.Request) {
+		// Validate JWT before upgrading to WebSocket
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		_, _, err := auth.ValidateSessionToken(parts[1], authConfig.JWTSecret)
+		if err != nil {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
 		// Get ticker from query parameter (required)
 		ticker := r.URL.Query().Get("ticker")
 		if ticker == "" {
@@ -102,8 +178,8 @@ func main() {
 		}()
 	})
 
-	// HTTP GET handler for transactions endpoint
-	http.HandleFunc("/transactions", func(w http.ResponseWriter, r *http.Request) {
+	// HTTP GET handler for transactions endpoint (protected by JWT)
+	transactionsHandler := func(w http.ResponseWriter, r *http.Request) {
 		// Only allow GET requests
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -157,7 +233,8 @@ func main() {
 			http.Error(w, "Error encoding response", http.StatusInternalServerError)
 			return
 		}
-	})
+	}
+	http.Handle("/transactions", auth.JWTMiddleware(authConfig.JWTSecret, http.HandlerFunc(transactionsHandler)))
 
 	// Root handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
