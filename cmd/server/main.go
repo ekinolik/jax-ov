@@ -246,13 +246,21 @@ func main() {
 
 	// Start analysis loop - analyze per ticker and send updates to subscribed clients
 	go func() {
-		updateTicker := time.NewTicker(1 * time.Minute)
+		updateTicker := time.NewTicker(5 * time.Second)
 		defer updateTicker.Stop()
 
-		// Track last processed period end timestamp per ticker
+		// Track last processed period end timestamp per ticker (for completed periods)
 		lastPeriodEnds := make(map[string]int64)
+		// Track last current period data per ticker (for in-progress periods)
+		// Map: ticker -> {periodEnd, totalPremium, callVolume, putVolume}
+		lastCurrentPeriodData := make(map[string]struct {
+			periodEnd    int64
+			totalPremium float64
+			callVolume   int64
+			putVolume    int64
+		})
 
-		// Analyze and broadcast every minute
+		// Analyze and broadcast every 5 seconds
 		for range updateTicker.C {
 			// Get current date in Pacific timezone
 			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
@@ -292,7 +300,59 @@ func main() {
 					if !exists || periodEnd > lastPeriodEnd {
 						wsServer.SendUpdateForTicker(ticker, *latestCompleteSummary)
 						lastPeriodEnds[ticker] = periodEnd
-						log.Printf("Sent update for ticker %s, period ending at %s", ticker, latestCompleteSummary.PeriodEnd.Format("15:04:05"))
+						log.Printf("Sent completed period update for ticker %s, period ending at %s", ticker, latestCompleteSummary.PeriodEnd.Format("15:04:05"))
+					}
+				}
+
+				// Find the latest period (could be current in-progress period)
+				if len(summaries) > 0 {
+					latestSummary := &summaries[len(summaries)-1]
+					periodEnd := latestSummary.PeriodEnd.UnixMilli()
+
+					// Check if this is the current in-progress period (not yet complete)
+					isCurrentPeriod := now.Sub(latestSummary.PeriodEnd) < periodDuration
+
+					// Clear current period data if the period is no longer current
+					if !isCurrentPeriod {
+						delete(lastCurrentPeriodData, ticker)
+					}
+
+					// Only send current period updates if:
+					// 1. It's the current period (not complete yet)
+					// 2. It has data (non-zero premiums or volumes)
+					// 3. The data has changed since last update (different period end OR different data values)
+					if isCurrentPeriod && (latestSummary.TotalPremium > 0 || latestSummary.CallVolume > 0 || latestSummary.PutVolume > 0) {
+						lastData, exists := lastCurrentPeriodData[ticker]
+						shouldSend := false
+
+						if !exists {
+							// First time seeing this period, send update
+							shouldSend = true
+						} else if periodEnd != lastData.periodEnd {
+							// Period changed (new period started), send update
+							shouldSend = true
+						} else if latestSummary.TotalPremium != lastData.totalPremium ||
+							latestSummary.CallVolume != lastData.callVolume ||
+							latestSummary.PutVolume != lastData.putVolume {
+							// Same period but data changed, send update
+							shouldSend = true
+						}
+
+						if shouldSend {
+							wsServer.SendUpdateForTicker(ticker, *latestSummary)
+							lastCurrentPeriodData[ticker] = struct {
+								periodEnd    int64
+								totalPremium float64
+								callVolume   int64
+								putVolume    int64
+							}{
+								periodEnd:    periodEnd,
+								totalPremium: latestSummary.TotalPremium,
+								callVolume:   latestSummary.CallVolume,
+								putVolume:    latestSummary.PutVolume,
+							}
+							log.Printf("Sent current period update for ticker %s, period ending at %s", ticker, latestSummary.PeriodEnd.Format("15:04:05"))
+						}
 					}
 				}
 			}

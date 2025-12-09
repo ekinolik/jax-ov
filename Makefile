@@ -17,7 +17,7 @@ PACKAGE_DIR=package
 TARBALL_DIR=$(PACKAGE_DIR)/jax-ov
 
 # Commands to build
-COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server trading-days
+COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days
 
 # Default target - build for current OS
 .PHONY: all
@@ -71,6 +71,10 @@ logger:
 	@echo "Building logger..."
 	$(GOBUILD) -o logger ./cmd/logger
 
+mock-logger:
+	@echo "Building mock-logger..."
+	$(GOBUILD) -o mock-logger ./cmd/mock-logger
+
 server:
 	@echo "Building server..."
 	$(GOBUILD) -o server ./cmd/server
@@ -120,6 +124,11 @@ linux-logger:
 	@mkdir -p $(LINUX_BINARY_DIR)
 	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/logger ./cmd/logger
 
+linux-mock-logger:
+	@echo "Building mock-logger for Linux..."
+	@mkdir -p $(LINUX_BINARY_DIR)
+	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/mock-logger ./cmd/mock-logger
+
 linux-server:
 	@echo "Building server for Linux..."
 	@mkdir -p $(LINUX_BINARY_DIR)
@@ -135,7 +144,7 @@ linux-trading-days:
 clean:
 	@echo "Cleaning build artifacts..."
 	$(GOCLEAN)
-	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger server trading-days
+	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days
 	@rm -rf $(BINARY_DIR)
 	@rm -rf $(PACKAGE_DIR)
 	@rm -f jax-ov-*.tar.gz

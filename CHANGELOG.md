@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00015] - 2025-12-09
+
+### Changed
+- Server now checks for new data every 5 seconds (instead of 1 minute) for near real-time updates
+- Server sends updates for both completed periods and current in-progress periods
+- Current period updates are sent when data changes, providing live updates to WebSocket clients
+
 ## [1.0.00013] - 2025-12-07
 
 ### Added

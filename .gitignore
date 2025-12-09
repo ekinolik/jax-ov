@@ -50,6 +50,7 @@ builds/
 /server
 /top-contracts
 /trading-days
+/mock-logger
 /jax-ov
 
 # build directory
