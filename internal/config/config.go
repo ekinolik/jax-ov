@@ -16,11 +16,11 @@ type Config struct {
 
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
-	AppleClientID  string
-	AppleTeamID    string
+	AppleClientID   string
+	AppleTeamID     string
 	ApplePrivateKey string
-	JWTSecret      string
-	JWTExpiryHours int
+	JWTSecret       string
+	JWTExpiryHours  int
 }
 
 // Load loads configuration from environment variables
@@ -75,15 +75,71 @@ func LoadAuth() (*AuthConfig, error) {
 	}
 
 	return &AuthConfig{
-		AppleClientID:  clientID,
-		AppleTeamID:    teamID,
+		AppleClientID:   clientID,
+		AppleTeamID:     teamID,
 		ApplePrivateKey: privateKey,
-		JWTSecret:      jwtSecret,
-		JWTExpiryHours: jwtExpiryHours,
+		JWTSecret:       jwtSecret,
+		JWTExpiryHours:  jwtExpiryHours,
 	}, nil
 }
 
 // JWTExpiryDuration returns the JWT expiry as a time.Duration
 func (a *AuthConfig) JWTExpiryDuration() time.Duration {
 	return time.Duration(a.JWTExpiryHours) * time.Hour
+}
+
+// APNSConfig holds APNS (Apple Push Notification Service) configuration
+type APNSConfig struct {
+	KeyPath     string
+	KeyID       string
+	TeamID      string
+	Topic       string
+	Environment string
+}
+
+// LoadAPNS loads APNS configuration from environment variables
+func LoadAPNS() (*APNSConfig, error) {
+	// Try to load .env file (ignore error if it doesn't exist)
+	_ = godotenv.Load()
+
+	keyPath := os.Getenv("APNS_KEY_PATH")
+	if keyPath == "" {
+		return nil, fmt.Errorf("APNS_KEY_PATH environment variable is required")
+	}
+
+	keyID := os.Getenv("APNS_KEY_ID")
+	if keyID == "" {
+		return nil, fmt.Errorf("APNS_KEY_ID environment variable is required")
+	}
+
+	teamID := os.Getenv("APNS_TEAM_ID")
+	if teamID == "" {
+		return nil, fmt.Errorf("APNS_TEAM_ID environment variable is required")
+	}
+	// Validate Team ID format (should be 10 characters, alphanumeric)
+	if len(teamID) != 10 {
+		return nil, fmt.Errorf("APNS_TEAM_ID must be a 10-character alphanumeric string (found: %q, length: %d). This should be your Apple Developer Team ID, not the team name", teamID, len(teamID))
+	}
+
+	topic := os.Getenv("APNS_TOPIC")
+	if topic == "" {
+		return nil, fmt.Errorf("APNS_TOPIC environment variable is required")
+	}
+
+	// Default to production if not specified
+	environment := os.Getenv("APNS_ENVIRONMENT")
+	if environment == "" {
+		environment = "production"
+	}
+	if environment != "production" && environment != "sandbox" {
+		return nil, fmt.Errorf("APNS_ENVIRONMENT must be 'production' or 'sandbox'")
+	}
+
+	return &APNSConfig{
+		KeyPath:     keyPath,
+		KeyID:       keyID,
+		TeamID:      teamID,
+		Topic:       topic,
+		Environment: environment,
+	}, nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/ekinolik/jax-ov/internal/analysis"
 	"github.com/ekinolik/jax-ov/internal/auth"
 	"github.com/ekinolik/jax-ov/internal/config"
+	"github.com/ekinolik/jax-ov/internal/notifications"
 	"github.com/ekinolik/jax-ov/internal/server"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
@@ -30,6 +31,7 @@ var upgrader = websocket.Upgrader{
 func main() {
 	// Parse command-line flags
 	logDir := flag.String("log-dir", "./logs", "Log directory path (default: ./logs)")
+	notificationsDir := flag.String("notifications-dir", "./notifications", "Notifications config directory (default: ./notifications)")
 	period := flag.Int("period", 5, "Analysis period in minutes (default: 5)")
 	port := flag.String("port", "8080", "WebSocket server port (default: 8080)")
 	host := flag.String("host", "localhost", "Bind address (default: localhost)")
@@ -44,6 +46,78 @@ func main() {
 	// Create WebSocket server
 	wsServer := server.NewServer()
 	go wsServer.Run()
+
+	// Device registration endpoint (protected by JWT)
+	devicesDir := flag.String("devices-dir", "./devices", "Devices directory path (default: ./devices)")
+
+	http.Handle("/auth/register", auth.JWTMiddleware(authConfig.JWTSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract user sub from JWT token
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		sub, _, err := auth.ValidateSessionToken(parts[1], authConfig.JWTSecret)
+		if err != nil {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Parse request body
+		var registerRequest struct {
+			DeviceToken string `json:"device_token"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&registerRequest); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if registerRequest.DeviceToken == "" {
+			http.Error(w, "device_token is required", http.StatusBadRequest)
+			return
+		}
+
+		// Load existing devices for user
+		devices, err := notifications.LoadUserDevices(sub, *devicesDir)
+		if err != nil {
+			log.Printf("Error loading devices for user %s: %v", sub, err)
+			http.Error(w, "Error loading devices", http.StatusInternalServerError)
+			return
+		}
+
+		// Add or update device token
+		notifications.AddOrUpdateDevice(devices, registerRequest.DeviceToken)
+
+		// Save devices back to file
+		if err := notifications.SaveUserDevices(sub, *devicesDir, devices); err != nil {
+			log.Printf("Error saving devices for user %s: %v", sub, err)
+			http.Error(w, "Error saving device", http.StatusInternalServerError)
+			return
+		}
+
+		// Return success response
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"success": true,
+			"message": "Device registered",
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Failed to encode response: %v", err)
+		}
+	})))
 
 	// Auth login endpoint (no JWT required)
 	http.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -239,6 +313,134 @@ func main() {
 		}
 	}
 	http.Handle("/transactions", auth.JWTMiddleware(authConfig.JWTSecret, http.HandlerFunc(transactionsHandler)))
+
+	// GET /notifications endpoint (protected by JWT)
+	getNotificationsHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract user sub from JWT (already validated by middleware)
+		// We need to get it from the request context or re-validate
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		sub, _, err := auth.ValidateSessionToken(parts[1], authConfig.JWTSecret)
+		if err != nil {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Load user notifications
+		userConfig, err := notifications.LoadUserNotifications(sub, *notificationsDir)
+		if err != nil {
+			log.Printf("Error loading notifications for user %s: %v", sub, err)
+			http.Error(w, "Error loading notifications", http.StatusInternalServerError)
+			return
+		}
+
+		// Return response
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"notifications": userConfig.Notifications,
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+	}
+
+	// PUT /notifications endpoint (protected by JWT)
+	putNotificationsHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract user sub from JWT
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		sub, _, err := auth.ValidateSessionToken(parts[1], authConfig.JWTSecret)
+		if err != nil {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Parse request body
+		var newConfig notifications.NotificationConfig
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if newConfig.Ticker == "" {
+			http.Error(w, "ticker is required", http.StatusBadRequest)
+			return
+		}
+		newConfig.Ticker = strings.ToUpper(newConfig.Ticker)
+
+		// Load existing user notifications
+		userConfig, err := notifications.LoadUserNotifications(sub, *notificationsDir)
+		if err != nil {
+			log.Printf("Error loading notifications for user %s: %v", sub, err)
+			http.Error(w, "Error loading notifications", http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure notifications map exists
+		if userConfig.Notifications == nil {
+			userConfig.Notifications = make(map[string]notifications.NotificationConfig)
+		}
+
+		// Overwrite notification for this ticker (only one per ticker)
+		userConfig.Notifications[newConfig.Ticker] = newConfig
+
+		// Save user notifications
+		if err := notifications.SaveUserNotifications(sub, *notificationsDir, userConfig); err != nil {
+			log.Printf("Error saving notifications for user %s: %v", sub, err)
+			http.Error(w, "Error saving notifications", http.StatusInternalServerError)
+			return
+		}
+
+		// Return success
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"success": true,
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Error encoding response: %v", err)
+		}
+	}
+
+	http.Handle("/notifications", auth.JWTMiddleware(authConfig.JWTSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getNotificationsHandler(w, r)
+		} else if r.Method == http.MethodPut {
+			putNotificationsHandler(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
 
 	// Root handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00017] - 2025-12-09
+
+### Added
+- APNS push notification support for threshold-triggered alerts
+- Device registration endpoint `/auth/register` (JWT protected) for storing user device tokens
+- Device storage system in `devices/` directory (one JSON file per user)
+- Real-time threshold evaluation for both completed and in-progress periods
+- Incremental period aggregation to correctly calculate premiums and ratios for entire periods
+
+### Changed
+- Notifications service now accumulates period data incrementally instead of recalculating from scratch each time
+- Notification thresholds are evaluated immediately when met, not waiting for period completion
+
 ## [1.0.00016] - 2025-12-09
 
 ### Changed

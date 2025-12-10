@@ -63,3 +63,7 @@ builds/
 # package files
 jax-ov-*.tar.gz
 package/
+
+# user data
+notifications_*.json
+devices/

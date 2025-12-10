@@ -13,6 +13,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.23.0 // indirect
 	github.com/go-resty/resty/v2 v2.13.1 // indirect
+	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -20,6 +21,7 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/massive-com/client-go/v2 v2.0.0 // indirect
 	github.com/scmhub/calendar v0.0.0-20250305134741-bdfe49f3f914 // indirect
+	github.com/sideshow/apns2 v0.25.0 // indirect
 	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd // indirect
 	golang.org/x/net v0.25.0 // indirect
