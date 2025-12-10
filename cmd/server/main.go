@@ -399,6 +399,8 @@ func main() {
 		}
 		newConfig.Ticker = strings.ToUpper(newConfig.Ticker)
 
+		// Disabled defaults to false (active) if not provided (Go's zero value)
+
 		// Load existing user notifications
 		userConfig, err := notifications.LoadUserNotifications(sub, *notificationsDir)
 		if err != nil {

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00020] - 2025-12-10
+
+### Changed
+- Changed notification config field from `active` to `disabled` (defaults to false, i.e., active)
+- Simplified default handling by using Go's zero value for bool (false = not disabled = active)
+
 ## [1.0.00019] - 2025-12-10
 
 ### Fixed

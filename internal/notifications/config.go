@@ -10,6 +10,7 @@ import (
 // NotificationConfig represents a single notification configuration for a ticker
 type NotificationConfig struct {
 	Ticker                string  `json:"ticker"`
+	Disabled              bool    `json:"disabled"`                // Whether notifications are disabled for this ticker (default: false, i.e., active)
 	RatioPremiumThreshold int     `json:"ratio_premium_threshold"` // Minimum total premium for ratio notifications
 	CallRatioThreshold    float64 `json:"call_ratio_threshold"`    // Notify if call/put ratio >= this AND total premium >= ratio_premium_threshold
 	PutRatioThreshold     float64 `json:"put_ratio_threshold"`     // Notify if put/call ratio >= this AND total premium >= ratio_premium_threshold
@@ -42,6 +43,7 @@ func LoadUserNotifications(sub string, dir string) (*UserNotifications, error) {
 		return nil, fmt.Errorf("failed to read notifications file: %w", err)
 	}
 
+	// Unmarshal into the struct
 	var config UserNotifications
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse notifications file: %w", err)
@@ -49,6 +51,9 @@ func LoadUserNotifications(sub string, dir string) (*UserNotifications, error) {
 
 	// Ensure user_id matches
 	config.UserID = sub
+
+	// Disabled defaults to false (not disabled = active) if field is missing
+	// Go's zero value for bool is false, so no special handling needed
 
 	return &config, nil
 }
@@ -113,8 +118,12 @@ func LoadAllNotifications(dir string) (map[string][]UserNotification, error) {
 			continue
 		}
 
-		// Add each ticker notification to result
+		// Add each ticker notification to result (only if not disabled)
 		for ticker, config := range userConfig.Notifications {
+			// Disabled defaults to false (active) if field is missing (Go's zero value)
+			if config.Disabled {
+				continue
+			}
 			result[ticker] = append(result[ticker], UserNotification{
 				UserID: sub,
 				Config: config,
