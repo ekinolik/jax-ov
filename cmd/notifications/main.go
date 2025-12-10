@@ -205,9 +205,11 @@ func main() {
 				newTickerSet[ticker] = true
 				if _, exists := tickerStates[ticker]; !exists {
 					tickerStates[ticker] = &TickerState{
-						LastFilePosition:    0,
-						NotifiedPeriods:     make(map[string]map[int64]bool),
-						MonitoringStartTime: time.Now(),
+						LastFilePosition:       0,
+						NotifiedPeriods:        make(map[string]map[int64]bool),
+						MonitoringStartTime:    time.Now(),
+						LastProcessedPeriodEnd: time.Time{}, // Zero time means no period processed yet
+						CurrentPeriods:         make(map[int64]*analysis.TimePeriodSummary),
 					}
 					log.Printf("Started monitoring ticker %s (reload)", ticker)
 				}

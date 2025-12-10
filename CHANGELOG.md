@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00018] - 2025-12-10
+
+### Fixed
+- Fixed panic in notifications service when new tickers are added during reload (nil map assignment to CurrentPeriods)
+
 ## [1.0.00017] - 2025-12-09
 
 ### Added
