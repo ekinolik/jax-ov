@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00019] - 2025-12-10
+
+### Fixed
+- Fixed duplicate notifications being sent for the same period (both in-progress and completed)
+- Notifications now use unified deduplication key to ensure only one notification per period
+
 ## [1.0.00018] - 2025-12-10
 
 ### Fixed

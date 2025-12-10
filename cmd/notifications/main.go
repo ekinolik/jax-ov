@@ -413,32 +413,21 @@ func main() {
 							// Check notifications for this period (both completed and in-progress)
 							for _, userNotif := range userNotifications {
 								evaluatedCount++
-								// Check deduplication
-								// For completed periods, we only notify once
-								// For in-progress periods, we can notify multiple times if thresholds are met again
-								// Use a more granular key that includes a time window for in-progress periods
+
+								// Check deduplication - we only send one notification per period
 								userPeriods, exists := state.NotifiedPeriods[userNotif.UserID]
 								if !exists {
 									userPeriods = make(map[int64]bool)
 									state.NotifiedPeriods[userNotif.UserID] = userPeriods
 								}
 
-								// Determine the notification key for deduplication
-								var notificationKey int64
-								if isComplete {
-									// For completed periods, use the period end timestamp
-									notificationKey = periodEnd
-									if userPeriods[notificationKey] {
-										continue
-									}
-								} else {
-									// For in-progress periods, use a 30-second window to avoid spam
-									// Round down to nearest 30 seconds for the notification key
-									notificationWindow := (now.Unix() / 30) * 30
-									notificationKey = periodEnd + notificationWindow // Combine period end with time window
-									if userPeriods[notificationKey] {
-										continue
-									}
+								// Use period end timestamp as the notification key for deduplication
+								// This ensures we only send one notification per period, regardless of whether
+								// it's in-progress or completed
+								notificationKey := periodEnd
+								if userPeriods[notificationKey] {
+									// Already notified for this period, skip
+									continue
 								}
 
 								// Evaluate thresholds
