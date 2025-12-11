@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Backup script now saves full backup tarball to script directory instead of /tmp
 - Backup script uses `aws s3 cp` instead of `aws s3 mv` for full backup, then deletes local file (even if upload fails)
+- Optimized individual file backups to use `aws s3 cp --recursive` with `--exclude` patterns instead of copying files one by one
+- Always use `aws s3 cp` for individual file backups (never `mv`), then manually delete files after successful copy
 
 ## [1.0.00020] - 2025-12-10
 

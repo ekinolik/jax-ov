@@ -361,46 +361,55 @@ main() {
         exit 0
     fi
     
-    # Backup files to S3
-    local backup_count=0
-    local failed_count=0
-    local s3_cmd="mv"
-    
-    if [[ "$NO_DELETE" == "true" ]]; then
-        s3_cmd="cp"
-        info "Using COPY mode (--no-delete): files will be kept on disk"
-    else
-        info "Using MOVE mode: files will be removed from disk after backup"
-    fi
-    
-    for file in "${files_to_backup[@]}"; do
-        local filename=$(basename "$file")
-        local s3_path="s3://${AWS_S3_PATH}/logs/$filename"
-        
-        info "Backing up $filename to $s3_path"
-        
-        # Temporarily disable exit on error for this command
-        set +e
-        if aws s3 "$s3_cmd" "$file" "$s3_path" 2>&1; then
-            backup_count=$((backup_count + 1))
-            if [[ "$NO_DELETE" == "true" ]]; then
-                info "Successfully copied: $filename (kept on disk)"
-            else
-                info "Successfully backed up: $filename (removed from disk)"
-            fi
-        else
-            failed_count=$((failed_count + 1))
-            warning "Failed to upload $filename to S3 - keeping on disk"
-        fi
-        set -e
+    # Build exclude patterns for dates to keep
+    # Pattern: *_YYYY-MM-DD.jsonl for each date in keep_dates
+    local exclude_patterns=()
+    for date in $keep_dates; do
+        exclude_patterns+=("--exclude" "*_${date}.jsonl")
     done
     
-    info "Backup complete. Successfully backed up: $backup_count, Failed: $failed_count"
+    # Backup files to S3 using recursive copy with exclude patterns
+    local s3_dest="s3://${AWS_S3_PATH}/logs/"
     
-    if [[ $failed_count -gt 0 ]]; then
-        warning "Some files failed to backup and were kept on disk"
+    if [[ "$NO_DELETE" == "true" ]]; then
+        info "Using COPY mode (--no-delete): files will be kept on disk"
+    else
+        info "Using COPY mode: files will be removed from disk after successful backup"
+    fi
+    
+    info "Backing up files to S3 (excluding ${#files_to_keep[@]} file(s) to keep)..."
+    
+    # Temporarily disable exit on error for this command
+    set +e
+    local backup_success=false
+    
+    # Use recursive copy with exclude patterns
+    # --exclude patterns will exclude files matching the keep dates
+    if aws s3 cp "$LOG_DIR" "$s3_dest" --recursive "${exclude_patterns[@]}" 2>&1; then
+        backup_success=true
+        info "Successfully backed up files to S3"
+        
+        # If not using --no-delete, remove files from disk after successful backup
+        if [[ "$NO_DELETE" != "true" ]]; then
+            info "Removing backed up files from disk..."
+            for file in "${files_to_backup[@]}"; do
+                if [[ -f "$file" ]]; then
+                    rm -f "$file"
+                fi
+            done
+            info "Removed ${#files_to_backup[@]} file(s) from disk"
+        fi
+    else
+        error "Failed to backup files to S3"
+        warning "All files remain on disk"
+    fi
+    set -e
+    
+    if [[ "$backup_success" == "false" ]]; then
         exit 1
     fi
+    
+    info "Backup complete. Successfully backed up ${#files_to_backup[@]} file(s)"
     
     exit 0
 }
