@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.00021] - 2025-12-10
+## [1.0.00023] - 2025-12-10
+
+### Fixed
+- Notifications service now tracks current date for each ticker and automatically switches to new day's log file when date changes
+- Service resets monitoring state (file position, periods, notifications) when date changes
+- File event handler validates that file date matches current date before processing
+
+## [1.0.00022] - 2025-12-10
 
 ### Changed
 - Backup script now saves full backup tarball to script directory instead of /tmp

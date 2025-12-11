@@ -80,6 +80,7 @@ func main() {
 
 	// TickerState tracks monitoring state for each ticker
 	type TickerState struct {
+		CurrentDate            string                                // Current date being monitored (YYYY-MM-DD)
 		LastFilePosition       int64                                 // Position at end of last completed period
 		NotifiedPeriods        map[string]map[int64]bool             // Map: userID -> map[periodEnd]bool (deduplication)
 		MonitoringStartTime    time.Time                             // When we started monitoring this ticker
@@ -105,6 +106,7 @@ func main() {
 		state, exists := tickerStates[ticker]
 		if !exists {
 			state = &TickerState{
+				CurrentDate:            "",
 				LastFilePosition:       0,
 				NotifiedPeriods:        make(map[string]map[int64]bool),
 				MonitoringStartTime:    time.Now(),
@@ -133,6 +135,11 @@ func main() {
 	for ticker := range allNotifications {
 		logFile := server.GetLogFileForTickerAndDate(*logDir, ticker, dateStr)
 		state := getTickerState(ticker)
+
+		// Set current date for this ticker
+		state.mu.Lock()
+		state.CurrentDate = dateStr
+		state.mu.Unlock()
 
 		// Check if file exists
 		if fileInfo, err := os.Stat(logFile); err == nil {
@@ -198,20 +205,45 @@ func main() {
 				continue
 			}
 
-			// Update ticker states (add new tickers, remove tickers with no notifications)
+			// Get current date in Pacific Time
+			pacificTZ, _ := time.LoadLocation("America/Los_Angeles")
+			currentDate := time.Now().In(pacificTZ).Format("2006-01-02")
+
+			// Update ticker states (add new tickers, remove tickers with no notifications, check date changes)
 			statesMu.Lock()
 			newTickerSet := make(map[string]bool)
 			for ticker := range newNotifications {
 				newTickerSet[ticker] = true
-				if _, exists := tickerStates[ticker]; !exists {
-					tickerStates[ticker] = &TickerState{
+				state, exists := tickerStates[ticker]
+				if !exists {
+					// New ticker - initialize
+					state = &TickerState{
+						CurrentDate:            currentDate,
 						LastFilePosition:       0,
 						NotifiedPeriods:        make(map[string]map[int64]bool),
 						MonitoringStartTime:    time.Now(),
 						LastProcessedPeriodEnd: time.Time{}, // Zero time means no period processed yet
 						CurrentPeriods:         make(map[int64]*analysis.TimePeriodSummary),
 					}
+					tickerStates[ticker] = state
 					log.Printf("Started monitoring ticker %s (reload)", ticker)
+				} else {
+					// Existing ticker - check if date changed
+					state.mu.Lock()
+					if state.CurrentDate != currentDate {
+						oldDate := state.CurrentDate
+						// Reset state for new date
+						state.CurrentDate = currentDate
+						state.LastFilePosition = 0
+						state.MonitoringStartTime = time.Now()
+						state.LastProcessedPeriodEnd = time.Time{}
+						state.CurrentPeriods = make(map[int64]*analysis.TimePeriodSummary)
+						state.NotifiedPeriods = make(map[string]map[int64]bool)
+						state.mu.Unlock()
+						log.Printf("Date changed for ticker %s: %s -> %s, reset monitoring state", ticker, oldDate, currentDate)
+					} else {
+						state.mu.Unlock()
+					}
 				}
 			}
 
@@ -248,18 +280,32 @@ func main() {
 
 				// Only process write events
 				if event.Op&fsnotify.Write == fsnotify.Write {
-					// Extract ticker from filename: SYMBOL_YYYY-MM-DD.jsonl
+					// Extract ticker and date from filename: SYMBOL_YYYY-MM-DD.jsonl
 					filename := filepath.Base(event.Name)
 					if !strings.HasSuffix(filename, ".jsonl") {
 						continue
 					}
 
-					// Parse ticker from filename
+					// Parse ticker and date from filename
 					parts := strings.Split(filename, "_")
 					if len(parts) < 2 {
 						continue
 					}
 					ticker := strings.ToUpper(parts[0])
+
+					// Extract date from filename (last part before .jsonl)
+					datePart := strings.TrimSuffix(parts[len(parts)-1], ".jsonl")
+
+					// Validate date format and check if it matches current date for this ticker
+					state := getTickerState(ticker)
+					state.mu.Lock()
+					currentDate := state.CurrentDate
+					state.mu.Unlock()
+
+					if datePart != currentDate {
+						// File is for a different date, skip it
+						continue
+					}
 
 					// Debounce: only process if we haven't seen this file recently
 					pendingMu.Lock()
