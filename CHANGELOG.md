@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00021] - 2025-12-10
+
+### Changed
+- Backup script now saves full backup tarball to script directory instead of /tmp
+- Backup script uses `aws s3 cp` instead of `aws s3 mv` for full backup, then deletes local file (even if upload fails)
+
 ## [1.0.00020] - 2025-12-10
 
 ### Changed

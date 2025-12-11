@@ -244,12 +244,12 @@ create_full_backup() {
     local backup_timestamp
     backup_timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_filename="logs-full-backup-${backup_timestamp}.tar.gz"
-    local backup_path="/tmp/${backup_filename}"
+    local backup_path="${SCRIPT_DIR}/${backup_filename}"
     local s3_backup_path="s3://${AWS_S3_PATH}/backups/${backup_filename}"
     
     info "Creating full backup tarball of logs directory..."
     
-    # Create tarball of entire logs directory in /tmp to avoid including it in the backup
+    # Create tarball of entire logs directory in script directory to avoid including it in the backup
     if ! tar -czf "$backup_path" -C "$(dirname "$LOG_DIR")" "$(basename "$LOG_DIR")" 2>/dev/null; then
         error "Failed to create full backup tarball"
         # Clean up any partial file that may have been created
@@ -261,21 +261,23 @@ create_full_backup() {
     
     info "Full backup created: $backup_filename ($(du -h "$backup_path" | cut -f1))"
     
-    # Upload to S3
+    # Upload to S3 using cp (not mv)
     info "Uploading full backup to S3: $s3_backup_path"
     local upload_success=false
-    if aws s3 mv "$backup_path" "$s3_backup_path" 2>&1; then
+    if aws s3 cp "$backup_path" "$s3_backup_path" 2>&1; then
         info "Successfully uploaded full backup to S3"
         upload_success=true
     else
         error "Failed to upload full backup to S3"
     fi
     
-    # Always delete the tarball from /tmp, even if upload failed
+    # Always delete the local tarball, regardless of upload success or failure
     if [[ -f "$backup_path" ]]; then
         rm -f "$backup_path"
-        if [[ "$upload_success" == "false" ]]; then
-            warning "Full backup tarball removed from /tmp (upload failed)"
+        if [[ "$upload_success" == "true" ]]; then
+            info "Removed local backup tarball after successful upload"
+        else
+            warning "Removed local backup tarball (upload failed)"
         fi
     fi
     
