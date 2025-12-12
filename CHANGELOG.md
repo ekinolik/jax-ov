@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00024] - 2025-12-10
+
+### Added
+- Configurable S3 prefixes for different backup types (transactions, analyzed, backups) via .env
+- Analyzed data backup step that processes transaction logs using log-analyze before backing up
+- Analyzed data is backed up to S3 with separate prefix (default: surgeflow/analyzed)
+- Analysis period configuration via ANALYSIS_PERIOD environment variable (default: 1 minute)
+- `--quiet` flag to log-analyze command to suppress informational output
+
+### Changed
+- Backup script now extracts bucket from AWS_S3_PATH and uses configurable prefixes
+- Backup flow: Full backup → Analyzed data backup → Transaction log backup
+- Binary lookup now checks script directory first (packaged binaries are in project root)
+- Backup script uses `--quiet` flag when calling log-analyze to reduce output noise
+
 ## [1.0.00023] - 2025-12-10
 
 ### Fixed

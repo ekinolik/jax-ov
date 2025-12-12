@@ -19,6 +19,7 @@ func main() {
 	input := flag.String("input", "", "Input JSONL log file path (required)")
 	period := flag.Int("period", 5, "Time period in minutes (default: 5)")
 	output := flag.String("output", "", "Optional output JSON file path")
+	quiet := flag.Bool("quiet", false, "Suppress informational output (only show errors)")
 	flag.Parse()
 
 	// Validate flags
@@ -31,14 +32,18 @@ func main() {
 	}
 
 	// Read JSONL file
-	fmt.Printf("Reading log file: %s\n", *input)
+	if !*quiet {
+		fmt.Printf("Reading log file: %s\n", *input)
+	}
 	aggregates, err := readJSONLFile(*input)
 	if err != nil {
 		log.Fatalf("Failed to read log file: %v", err)
 	}
 
-	fmt.Printf("Loaded %d aggregates\n", len(aggregates))
-	fmt.Printf("Aggregating premiums by %d-minute periods...\n", *period)
+	if !*quiet {
+		fmt.Printf("Loaded %d aggregates\n", len(aggregates))
+		fmt.Printf("Aggregating premiums by %d-minute periods...\n", *period)
+	}
 
 	// Aggregate premiums
 	summaries, err := analysis.AggregatePremiums(aggregates, *period)
@@ -46,18 +51,26 @@ func main() {
 		log.Fatalf("Failed to aggregate premiums: %v", err)
 	}
 
-	fmt.Printf("Found %d time periods\n\n", len(summaries))
+	if !*quiet {
+		fmt.Printf("Found %d time periods\n\n", len(summaries))
+	}
 
-	// Display table
-	displayTable(summaries)
+	// Display table only if not quiet
+	if !*quiet {
+		displayTable(summaries)
+	}
 
 	// Write JSON output if requested
 	if *output != "" {
-		fmt.Printf("\nWriting results to %s...\n", *output)
+		if !*quiet {
+			fmt.Printf("\nWriting results to %s...\n", *output)
+		}
 		if err := writeJSONOutput(summaries, *output); err != nil {
 			log.Fatalf("Failed to write JSON output: %v", err)
 		}
-		fmt.Printf("Successfully wrote results to %s\n", *output)
+		if !*quiet {
+			fmt.Printf("Successfully wrote results to %s\n", *output)
+		}
 	}
 }
 

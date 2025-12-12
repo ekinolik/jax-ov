@@ -107,6 +107,36 @@ validate_env() {
         error "AWS_S3_PATH must be in format 'bucket/prefix', got: $AWS_S3_PATH"
         exit 1
     fi
+    
+    # Load prefix environment variables with defaults
+    AWS_S3_TRANSACTIONS_PREFIX="${AWS_S3_TRANSACTIONS_PREFIX:-transactions}"
+    AWS_S3_ANALYZED_PREFIX="${AWS_S3_ANALYZED_PREFIX:-analyzed}"
+    AWS_S3_BACKUPS_PREFIX="${AWS_S3_BACKUPS_PREFIX:-backups}"
+    
+    # Validate prefixes don't have leading/trailing slashes
+    if [[ "$AWS_S3_TRANSACTIONS_PREFIX" =~ ^/|/$ ]]; then
+        error "AWS_S3_TRANSACTIONS_PREFIX should not have leading or trailing slashes"
+        exit 1
+    fi
+    
+    if [[ "$AWS_S3_ANALYZED_PREFIX" =~ ^/|/$ ]]; then
+        error "AWS_S3_ANALYZED_PREFIX should not have leading or trailing slashes"
+        exit 1
+    fi
+    
+    if [[ "$AWS_S3_BACKUPS_PREFIX" =~ ^/|/$ ]]; then
+        error "AWS_S3_BACKUPS_PREFIX should not have leading or trailing slashes"
+        exit 1
+    fi
+    
+    # Load analysis period with default
+    ANALYSIS_PERIOD="${ANALYSIS_PERIOD:-1}"
+    
+    # Validate analysis period
+    if ! [[ "$ANALYSIS_PERIOD" =~ ^[0-9]+$ ]] || [[ "$ANALYSIS_PERIOD" -le 0 ]]; then
+        error "ANALYSIS_PERIOD must be a positive integer, got: $ANALYSIS_PERIOD"
+        exit 1
+    fi
 }
 
 # Find trading-days binary
@@ -132,6 +162,25 @@ find_trading_days_binary() {
     fi
     
     error "trading-days binary not found. Please ensure it's in PATH or in the project directory."
+    exit 1
+}
+
+# Find log-analyze binary
+find_log_analyze_binary() {
+    # Try in script directory (project root) first
+    local root_binary="${SCRIPT_DIR}/log-analyze"
+    if [[ -f "$root_binary" ]] && [[ -x "$root_binary" ]]; then
+        echo "$root_binary"
+        return 0
+    fi
+    
+    # Try in PATH
+    if command -v log-analyze &> /dev/null; then
+        echo "log-analyze"
+        return 0
+    fi
+    
+    error "log-analyze binary not found. Please ensure it's in PATH or in the project directory."
     exit 1
 }
 
@@ -230,13 +279,92 @@ extract_date_from_filename() {
     fi
 }
 
-# Check if date is in keep list
-is_date_in_keep_list() {
-    local date="$1"
-    local keep_list="$2"
+    # Check if date is in keep list
+    is_date_in_keep_list() {
+        local date="$1"
+        local keep_list="$2"
+        
+        # Check if date exists in the keep list
+        [[ " $keep_list " =~ " $date " ]]
+    }
+
+# Backup analyzed data
+backup_analyzed_data() {
+    local files_to_backup_ref="$1[@]"
+    local files_array=("${!files_to_backup_ref}")
+    local log_analyze_binary="$2"
     
-    # Check if date exists in the keep list
-    [[ " $keep_list " =~ " $date " ]]
+    if [[ ${#files_array[@]} -eq 0 ]]; then
+        info "No files to analyze"
+        return 0
+    fi
+    
+    # Create temporary directory for analyzed output
+    local analyzed_dir="${SCRIPT_DIR}/tmp_analyzed"
+    mkdir -p "$analyzed_dir"
+    
+    info "Analyzing ${#files_array[@]} transaction log file(s) for backup..."
+    
+    local analyzed_count=0
+    local failed_count=0
+    
+    # Process each file
+    for file in "${files_array[@]}"; do
+        local filename=$(basename "$file")
+        local output_filename="${filename%.jsonl}.json"
+        local output_path="${analyzed_dir}/${output_filename}"
+        
+        info "Analyzing $filename..."
+        
+        # Run log-analyze on this file (quiet mode to reduce output)
+        if "$log_analyze_binary" --input "$file" --output "$output_path" --period "$ANALYSIS_PERIOD" --quiet 2>&1; then
+            analyzed_count=$((analyzed_count + 1))
+            info "Successfully analyzed: $filename"
+        else
+            failed_count=$((failed_count + 1))
+            warning "Failed to analyze: $filename"
+            # Remove partial output if it exists
+            [[ -f "$output_path" ]] && rm -f "$output_path"
+        fi
+    done
+    
+    info "Analysis complete. Successfully analyzed: $analyzed_count, Failed: $failed_count"
+    
+    # If no files were successfully analyzed, skip backup
+    if [[ $analyzed_count -eq 0 ]]; then
+        warning "No files were successfully analyzed, skipping analyzed data backup"
+        rm -rf "$analyzed_dir"
+        return 0
+    fi
+    
+    # Backup analyzed files to S3
+    local s3_analyzed_dest="s3://${AWS_S3_PATH}/${AWS_S3_ANALYZED_PREFIX}/"
+    info "Backing up analyzed data to S3: $s3_analyzed_dest"
+    
+    set +e
+    local backup_success=false
+    if aws s3 cp "$analyzed_dir" "$s3_analyzed_dest" --recursive 2>&1; then
+        backup_success=true
+        info "Successfully backed up analyzed data to S3"
+    else
+        error "Failed to backup analyzed data to S3"
+    fi
+    set -e
+    
+    # Always delete the temporary directory, regardless of backup success
+    rm -rf "$analyzed_dir"
+    if [[ "$backup_success" == "true" ]]; then
+        info "Removed temporary analyzed data directory"
+    else
+        warning "Removed temporary analyzed data directory (backup failed)"
+    fi
+    
+    # Return error if backup failed
+    if [[ "$backup_success" == "false" ]]; then
+        return 1
+    fi
+    
+    return 0
 }
 
 # Create full backup tarball of logs directory
@@ -245,7 +373,7 @@ create_full_backup() {
     backup_timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_filename="logs-full-backup-${backup_timestamp}.tar.gz"
     local backup_path="${SCRIPT_DIR}/${backup_filename}"
-    local s3_backup_path="s3://${AWS_S3_PATH}/backups/${backup_filename}"
+    local s3_backup_path="s3://${AWS_S3_PATH}/${AWS_S3_BACKUPS_PREFIX}/${backup_filename}"
     
     info "Creating full backup tarball of logs directory..."
     
@@ -324,6 +452,11 @@ main() {
     # Create full backup tarball first (disaster recovery backup)
     create_full_backup
     
+    # Find log-analyze binary for analyzed data backup
+    local log_analyze_binary
+    log_analyze_binary=$(find_log_analyze_binary)
+    info "Found log-analyze binary: $log_analyze_binary"
+    
     # Scan log directory for files
     local files_to_backup=()
     local files_to_keep=()
@@ -368,8 +501,13 @@ main() {
         exclude_patterns+=("--exclude" "*_${date}.jsonl")
     done
     
+    # Backup analyzed data before backing up transaction logs
+    if ! backup_analyzed_data files_to_backup "$log_analyze_binary"; then
+        warning "Analyzed data backup failed, but continuing with transaction log backup"
+    fi
+    
     # Backup files to S3 using recursive copy with exclude patterns
-    local s3_dest="s3://${AWS_S3_PATH}/logs/"
+    local s3_dest="s3://${AWS_S3_PATH}/${AWS_S3_TRANSACTIONS_PREFIX}/"
     
     if [[ "$NO_DELETE" == "true" ]]; then
         info "Using COPY mode (--no-delete): files will be kept on disk"
