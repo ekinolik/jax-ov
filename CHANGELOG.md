@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00025] - 2025-12-10
+
+### Added
+- Configurable temporary directory for analyzed data via ANALYZED_TMP_DIR environment variable (default: tmp_analyzed)
+
 ## [1.0.00024] - 2025-12-10
 
 ### Added
@@ -12,7 +17,7 @@ All notable changes to this project will be documented in this file.
 - `--quiet` flag to log-analyze command to suppress informational output
 
 ### Changed
-- Backup script now extracts bucket from AWS_S3_PATH and uses configurable prefixes
+- Backup script now appends prefixes to AWS_S3_PATH (no longer extracts bucket separately)
 - Backup flow: Full backup → Analyzed data backup → Transaction log backup
 - Binary lookup now checks script directory first (packaged binaries are in project root)
 - Backup script uses `--quiet` flag when calling log-analyze to reduce output noise

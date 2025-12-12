@@ -137,6 +137,15 @@ validate_env() {
         error "ANALYSIS_PERIOD must be a positive integer, got: $ANALYSIS_PERIOD"
         exit 1
     fi
+    
+    # Load analyzed temp directory with default
+    ANALYZED_TMP_DIR="${ANALYZED_TMP_DIR:-tmp_analyzed}"
+    
+    # Validate it's a relative path (no leading slash, no ..)
+    if [[ "$ANALYZED_TMP_DIR" =~ ^/|\.\./|\.\.$ ]]; then
+        error "ANALYZED_TMP_DIR must be a relative path (no leading slash or ..), got: $ANALYZED_TMP_DIR"
+        exit 1
+    fi
 }
 
 # Find trading-days binary
@@ -299,8 +308,8 @@ backup_analyzed_data() {
         return 0
     fi
     
-    # Create temporary directory for analyzed output
-    local analyzed_dir="${SCRIPT_DIR}/tmp_analyzed"
+    # Create temporary directory for analyzed output (relative to project root)
+    local analyzed_dir="${SCRIPT_DIR}/${ANALYZED_TMP_DIR}"
     mkdir -p "$analyzed_dir"
     
     info "Analyzing ${#files_array[@]} transaction log file(s) for backup..."
