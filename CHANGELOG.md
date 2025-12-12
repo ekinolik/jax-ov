@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.00026] - 2025-12-10
+## [1.0.00027] - 2025-12-11
+
+### Added
+- New `premium-outliers-dir` command to process all log files in a directory and find premium outliers
+
+## [1.0.00026] - 2025-12-11
 
 ### Added
 - New `premium-outliers` command to analyze transaction logs and find premium outliers (10x and 100x median)
