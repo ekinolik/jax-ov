@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.00026] - 2025-12-10
+
+### Added
+- New `premium-outliers` command to analyze transaction logs and find premium outliers (10x and 100x median)
+
 ## [1.0.00025] - 2025-12-10
 
 ### Added

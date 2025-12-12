@@ -17,7 +17,7 @@ PACKAGE_DIR=package
 TARBALL_DIR=$(PACKAGE_DIR)/jax-ov
 
 # Commands to build
-COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days notifications
+COMMANDS=monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days notifications premium-outliers
 
 # Default target - build for current OS
 .PHONY: all
@@ -87,6 +87,10 @@ notifications:
 	@echo "Building notifications..."
 	$(GOBUILD) -o notifications ./cmd/notifications
 
+premium-outliers:
+	@echo "Building premium-outliers..."
+	$(GOBUILD) -o premium-outliers ./cmd/premium-outliers
+
 # Linux-specific builds
 linux-monitor:
 	@echo "Building monitor for Linux..."
@@ -148,12 +152,17 @@ linux-notifications:
 	@mkdir -p $(LINUX_BINARY_DIR)
 	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/notifications ./cmd/notifications
 
+linux-premium-outliers:
+	@echo "Building premium-outliers for Linux..."
+	@mkdir -p $(LINUX_BINARY_DIR)
+	GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH) $(GOBUILD) -o $(LINUX_BINARY_DIR)/premium-outliers ./cmd/premium-outliers
+
 # Clean build artifacts
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
 	$(GOCLEAN)
-	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days notifications
+	@rm -f monitor reconstruct analyze log-analyze extract log-extract top-contracts logger mock-logger server trading-days notifications premium-outliers
 	@rm -rf $(BINARY_DIR)
 	@rm -rf $(PACKAGE_DIR)
 	@rm -f jax-ov-*.tar.gz
